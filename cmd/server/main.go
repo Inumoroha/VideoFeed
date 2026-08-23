@@ -2,11 +2,10 @@ package main
 
 import (
 	"log"
-	"net"
-	"strconv"
 
 	"github.com/inumoroha/video-feed/internal/config"
 	"github.com/inumoroha/video-feed/internal/router"
+	"github.com/inumoroha/video-feed/internal/server"
 )
 
 // main 加载应用配置、注册路由并启动 HTTP 服务。
@@ -21,8 +20,7 @@ func main() {
 	g := router.Setup()
 
 	// 3. 启动服务器
-	addr := net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port))
-	if err := g.Run(addr); err != nil {
+	if err := server.Run(&cfg.Server, g); err != nil {
 		log.Fatalf("starting server: %v", err)
 	}
 }
