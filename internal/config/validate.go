@@ -16,6 +16,9 @@ func validateConfig(cfg *Config) error {
 	if err := validateServerConfig(&cfg.Server); err != nil {
 		return err
 	}
+	if err := validateDatabaseConfig(&cfg.Database); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -40,6 +43,21 @@ func validateServerConfig(cfg *ServerConfig) error {
 	}
 	if cfg.Port < 1 || cfg.Port > 65535 {
 		return fmt.Errorf("server.port must be between 1 and 65535")
+	}
+	return nil
+}
+
+// validateDatabaseConfig 校验数据库驱动和连接地址，并拒绝未替换的环境变量占位符。
+func validateDatabaseConfig(cfg *DatabaseConfig) error {
+	if strings.TrimSpace(cfg.Driver) == "" {
+		return fmt.Errorf("database.driver is empty")
+	}
+	url := strings.TrimSpace(cfg.URL)
+	if url == "" {
+		return fmt.Errorf("database.url is empty")
+	}
+	if strings.Contains(url, "${") {
+		return fmt.Errorf("database.url contains unresolved environment variable")
 	}
 	return nil
 }

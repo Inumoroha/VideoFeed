@@ -3,8 +3,9 @@ package config
 import "time"
 
 type Config struct {
-	App    AppConfig    `mapstructure:"app"`
-	Server ServerConfig `mapstructure:"server"`
+	App      AppConfig      `mapstructure:"app"`
+	Server   ServerConfig   `mapstructure:"server"`
+	Database DatabaseConfig `mapstructure:"database"`
 }
 
 // AppConfig 是应用配置结构体
@@ -23,4 +24,9 @@ type ServerConfig struct {
 	WriteTimeout      time.Duration `mapstructure:"write_timeout"`
 	IdleTimeout       time.Duration `mapstructure:"idle_timeout"`
 	ShutdownTimeout   time.Duration `mapstructure:"shutdown_timeout"`
+}
+
+type DatabaseConfig struct {
+	Driver string `mapstructure:"driver"`
+	URL    string `mapstructure:"url"`
 }
