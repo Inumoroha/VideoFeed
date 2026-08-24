@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -11,7 +10,7 @@ import (
 func Load(filename string) (*Config, error) {
 	filename = strings.TrimSpace(filename)
 	if filename == "" {
-		return nil, fmt.Errorf("config file path is empty")
+		return nil, ErrEmptyConfigPath
 	}
 
 	v := viper.New()
@@ -19,16 +18,16 @@ func Load(filename string) (*Config, error) {
 	v.SetConfigType("yaml")
 
 	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("reading config file: %w", err)
+		return nil, ErrReadConfigFailed
 	}
 
 	var cfg Config
 
 	if err := v.UnmarshalExact(&cfg); err != nil {
-		return nil, fmt.Errorf("unmarshalling config into struct: %w", err)
+		return nil, ErrUnmarshalConfigFailed
 	}
 	if err := validateConfig(&cfg); err != nil {
-		return nil, fmt.Errorf("validating config: %w", err)
+		return nil, ErrValidateConfigFailed
 	}
 	return &cfg, nil
 }
