@@ -82,6 +82,9 @@ func validateJWTConfig(cfg *JWTConfig) error {
 	if strings.Contains(secret, "${") {
 		return fmt.Errorf("auth.jwt.secret contains unresolved environment variable")
 	}
+	if secret == "replace-with-strong-secret" || len([]byte(secret)) < 32 {
+		return fmt.Errorf("auth.jwt.secret must contain at least 32 bytes")
+	}
 
 	if cfg.AccessTTL <= 0 {
 		return fmt.Errorf("auth.jwt.access_ttl must be a positive duration")
