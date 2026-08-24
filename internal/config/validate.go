@@ -19,6 +19,9 @@ func validateConfig(cfg *Config) error {
 	if err := validateDatabaseConfig(&cfg.Database); err != nil {
 		return err
 	}
+	if err := validateAuthConfig(&cfg.Auth); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -58,6 +61,36 @@ func validateDatabaseConfig(cfg *DatabaseConfig) error {
 	}
 	if strings.Contains(url, "${") {
 		return fmt.Errorf("database.url contains unresolved environment variable")
+	}
+	return nil
+}
+
+// validateAuthConfig 校验认证配置
+func validateAuthConfig(cfg *AuthConfig) error {
+	if err := validateJWTConfig(&cfg.JWT); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateJWTConfig 校验JWT配置
+func validateJWTConfig(cfg *JWTConfig) error {
+	secret := strings.TrimSpace(cfg.Secret)
+	if secret == "" {
+		return fmt.Errorf("auth.jwt.secret is empty")
+	}
+	if strings.Contains(secret, "${") {
+		return fmt.Errorf("auth.jwt.secret contains unresolved environment variable")
+	}
+
+	if cfg.AccessTTL <= 0 {
+		return fmt.Errorf("auth.jwt.access_ttl must be a positive duration")
+	}
+	if cfg.RefreshTTL <= 0 {
+		return fmt.Errorf("auth.jwt.refresh_ttl must be a positive duration")
+	}
+	if cfg.RefreshTTL <= cfg.AccessTTL {
+		return fmt.Errorf("auth.jwt.refresh_ttl must be greater than auth.jwt.access_ttl")
 	}
 	return nil
 }

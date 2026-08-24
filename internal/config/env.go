@@ -16,6 +16,7 @@ var environmentBindings = []struct {
 	env string
 }{
 	{key: "database.url", env: "DATABASE_URL"},
+	{key: "auth.jwt.secret", env: "JWT_SECRET"},
 }
 
 // loadDotEnv 加载显式或根据配置文件位置推导的 .env 文件。
@@ -45,13 +46,16 @@ func loadDotEnv(configFilename, envFilename string) error {
 }
 
 // resolveEnvFile 根据配置文件目录查找 .env，优先查找配置文件所在目录及其父目录。
+// configFilename 配置文件路径，例如：/path/to/config.yaml
 func resolveEnvFile(configFilename string) (string, error) {
+	// filepath.Dir() 返回路径的目录部分，不包含文件名，示例：/path/to/file.yaml -> /path/to
 	configDir := filepath.Dir(configFilename)
 	candidates := []string{
 		filepath.Join(configDir, ".env"),
 		filepath.Join(filepath.Dir(configDir), ".env"),
 	}
 	for _, candidate := range candidates {
+		// os.Stat() 返回文件或目录的文件信息，包括是否为目录、是否存在等
 		info, err := os.Stat(candidate)
 		if err == nil {
 			if info.IsDir() {
@@ -67,9 +71,9 @@ func resolveEnvFile(configFilename string) (string, error) {
 }
 
 // bindEnvironmentVariables 将约定的环境变量绑定到 Viper 配置键。
-func bindEnvironmentVariables(settings *viper.Viper) error {
+func bindEnvironmentVariables(v *viper.Viper) error {
 	for _, binding := range environmentBindings {
-		if err := settings.BindEnv(binding.key, binding.env); err != nil {
+		if err := v.BindEnv(binding.key, binding.env); err != nil {
 			return fmt.Errorf("绑定环境变量 %s 失败: %w", binding.env, err)
 		}
 	}

@@ -6,6 +6,7 @@ type Config struct {
 	App      AppConfig      `mapstructure:"app"`
 	Server   ServerConfig   `mapstructure:"server"`
 	Database DatabaseConfig `mapstructure:"database"`
+	Auth     AuthConfig     `mapstructure:"auth"`
 }
 
 // AppConfig 是应用配置结构体
@@ -26,7 +27,20 @@ type ServerConfig struct {
 	ShutdownTimeout   time.Duration `mapstructure:"shutdown_timeout"`
 }
 
+// DatabaseConfig 是数据库配置结构体
 type DatabaseConfig struct {
 	Driver string `mapstructure:"driver"`
 	URL    string `mapstructure:"url"`
+}
+
+// AuthConfig 是认证配置结构体
+type AuthConfig struct {
+	JWT JWTConfig `mapstructure:"jwt"`
+}
+
+// JWTConfig 是JWT配置结构体
+type JWTConfig struct {
+	Secret     string        `mapstructure:"secret"`
+	AccessTTL  time.Duration `mapstructure:"access_ttl"`
+	RefreshTTL time.Duration `mapstructure:"refresh_ttl"`
 }
