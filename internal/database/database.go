@@ -2,18 +2,18 @@ package database
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/inumoroha/video-feed/internal/config"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
-// New 根据数据库配置创建 PostgreSQL 连接池，连接检测失败时关闭已创建的资源。
-func New(ctx context.Context, cfg config.DatabaseConfig) (*sql.DB, error) {
+// New 根据数据库配置创建并连通 PostgreSQL 的 GORM 数据库实例，同时配置底层连接池。
+func New(ctx context.Context, cfg config.DatabaseConfig) (*gorm.DB, error) {
 	driver := strings.ToLower(strings.TrimSpace(cfg.Driver))
 	if driver != "postgres" && driver != "postgresql" {
 		return nil, fmt.Errorf("unsupported database driver: %q", cfg.Driver)
@@ -27,18 +27,25 @@ func New(ctx context.Context, cfg config.DatabaseConfig) (*sql.DB, error) {
 		ctx = context.Background()
 	}
 
-	db, err := sql.Open("pgx", url)
+	db, err := gorm.Open(postgres.Open(url), &gorm.Config{
+		TranslateError: true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	db.SetMaxIdleConns(10)
-	db.SetMaxOpenConns(50)
-	db.SetConnMaxIdleTime(5 * time.Minute)
-	db.SetConnMaxLifetime(30 * time.Minute)
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("get database connection: %w", err)
+	}
 
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetMaxOpenConns(50)
+	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
+	sqlDB.SetConnMaxLifetime(30 * time.Minute)
+
+	if err := sqlDB.PingContext(ctx); err != nil {
+		_ = sqlDB.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 

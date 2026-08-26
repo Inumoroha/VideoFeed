@@ -23,7 +23,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("connecting database: %v", err)
 	}
-	defer db.Close()
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("getting database connection: %v", err)
+	}
+	defer sqlDB.Close()
 
 	// 3. 设置 Gin 路由
 	g := router.Setup()
