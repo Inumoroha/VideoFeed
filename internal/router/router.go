@@ -1,9 +1,14 @@
 package router
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/inumoroha/video-feed/internal/config"
 
-// Setup 设置 Gin 路由
-func Setup() *gin.Engine {
+	"gorm.io/gorm"
+)
+
+// Setup 创建 Gin 引擎并注册依赖应用配置和数据库的路由。
+func Setup(cfg *config.Config, gormDB *gorm.DB) (*gin.Engine, error) {
 	// 设置 Gin 模式
 	gin.SetMode(gin.ReleaseMode)
 
@@ -11,7 +16,9 @@ func Setup() *gin.Engine {
 	g := gin.Default()
 
 	// 注册路由
-	Register(g)
+	if err := Register(g, cfg, gormDB); err != nil {
+		return nil, err
+	}
 
-	return g
+	return g, nil
 }

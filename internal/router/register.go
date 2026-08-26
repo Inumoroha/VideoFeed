@@ -1,11 +1,49 @@
 package router
 
 import (
+	"fmt"
+
 	"github.com/gin-gonic/gin"
+	applicationuser "github.com/inumoroha/video-feed/internal/application/user"
+	authjwt "github.com/inumoroha/video-feed/internal/auth/jwt"
+	"github.com/inumoroha/video-feed/internal/config"
 	"github.com/inumoroha/video-feed/internal/handler"
+	userhandler "github.com/inumoroha/video-feed/internal/handler/user"
+	userpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/user"
+
+	"gorm.io/gorm"
 )
 
-// Register 注册路由
-func Register(g *gin.Engine) {
+// Register 组装用户认证依赖、迁移用户数据表并注册应用路由。
+func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
+	if g == nil {
+		return fmt.Errorf("gin engine is nil")
+	}
+	if cfg == nil {
+		return fmt.Errorf("application config is nil")
+	}
+	if gormDB == nil {
+		return fmt.Errorf("gorm database is nil")
+	}
+
+	if err := gormDB.AutoMigrate(&userpersistence.UserModel{}); err != nil {
+		return fmt.Errorf("migrate users: %w", err)
+	}
+
+	jwtManager, err := authjwt.NewManager(cfg.Auth.JWT)
+	if err != nil {
+		return fmt.Errorf("create JWT manager: %w", err)
+	}
+
+	userRepository := userpersistence.New(gormDB)
+	userService := applicationuser.NewService(userRepository, jwtManager)
+	userHandler := userhandler.NewHandler(userService)
+
 	g.GET("/health", handler.Health)
+
+	auth := g.Group("/auth")
+	auth.POST("/register", userHandler.Register)
+	auth.POST("/login", userHandler.Login)
+
+	return nil
 }

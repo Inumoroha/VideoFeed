@@ -19,18 +19,21 @@ func main() {
 	}
 
 	// 2. 连接数据库
-	db, err := database.New(context.Background(), cfg.Database)
+	gormDB, err := database.New(context.Background(), cfg.Database)
 	if err != nil {
 		log.Fatalf("connecting database: %v", err)
 	}
-	sqlDB, err := db.DB()
+	sqlDB, err := gormDB.DB()
 	if err != nil {
 		log.Fatalf("getting database connection: %v", err)
 	}
 	defer sqlDB.Close()
 
 	// 3. 设置 Gin 路由
-	g := router.Setup()
+	g, err := router.Setup(cfg, gormDB)
+	if err != nil {
+		log.Fatalf("setting up routes: %v", err)
+	}
 
 	// 4. 启动服务器
 	if err := server.Run(&cfg.Server, g); err != nil {

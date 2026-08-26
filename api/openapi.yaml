@@ -1,0 +1,188 @@
+openapi: 3.0.3
+info:
+  title: Video Feed API
+  version: 1.0.0
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Get service health status
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: healthy
+  /auth/register:
+    post:
+      tags:
+        - Authentication
+      summary: Register a user
+      operationId: registerUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              account: demo_user
+              password: example-password
+              nickname: Demo User
+      responses:
+        '201':
+          description: User registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: registration successful
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '409':
+          description: Account already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: account already exists
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: Log in with account and password
+      operationId: loginUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              account: demo_user
+              password: example-password
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              example:
+                access_token: example-access-token
+                token_type: Bearer
+                expires_in_seconds: 900
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid credentials
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          example: healthy
+    RegisterRequest:
+      type: object
+      required:
+        - account
+        - password
+        - nickname
+      properties:
+        account:
+          type: string
+          minLength: 1
+          pattern: '.*\S.*'
+        password:
+          type: string
+          minLength: 1
+          pattern: '.*\S.*'
+        nickname:
+          type: string
+          minLength: 1
+          pattern: '.*\S.*'
+    LoginRequest:
+      type: object
+      required:
+        - account
+        - password
+      properties:
+        account:
+          type: string
+          minLength: 1
+          pattern: '.*\S.*'
+        password:
+          type: string
+          minLength: 1
+          pattern: '.*\S.*'
+    LoginResponse:
+      type: object
+      required:
+        - access_token
+        - token_type
+        - expires_in_seconds
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in_seconds:
+          type: integer
+          format: int64
+          example: 900
+    MessageResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+  responses:
+    InvalidRequest:
+      description: Invalid request body or input fields
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: invalid request
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: internal server error
