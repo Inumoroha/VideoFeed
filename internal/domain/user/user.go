@@ -6,7 +6,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const RoleUser = "user"
+const (
+	RoleUser = "user"
+	StatusNormal = 1
+)
 
 type User struct {
 	ID       int64
@@ -14,6 +17,9 @@ type User struct {
 	Password string
 	Nickname string
 	Role     string
+	AvatarURL string
+	Bio       string
+	Status    int
 }
 
 // New 校验用户输入并生成密码哈希，返回一个默认角色为普通用户的新用户。
@@ -41,15 +47,21 @@ func New(account, password, nickname string) (*User, error) {
 		Password: string(hashPassword),
 		Nickname: nickname,
 		Role:     RoleUser,
+		Status:   StatusNormal,
 	}, nil
 }
 
 // RestoreUser 根据持久化数据恢复用户对象，并在角色为空时使用普通用户角色。
-func RestoreUser(id int64, account, passwordHash, nickname, role string) *User {
+func RestoreUser(id int64, account, passwordHash, nickname, role, avatarURL, bio string, status int) *User {
 	account = strings.TrimSpace(account)
 	passwordHash = strings.TrimSpace(passwordHash)
 	nickname = strings.TrimSpace(nickname)
 	role = strings.TrimSpace(role)
+	avatarURL = strings.TrimSpace(avatarURL)
+	bio = strings.TrimSpace(bio)
+	if status == 0 {
+		status = StatusNormal
+	}
 	if role == "" {
 		role = RoleUser
 	}
@@ -60,6 +72,9 @@ func RestoreUser(id int64, account, passwordHash, nickname, role string) *User {
 		Password: passwordHash,
 		Nickname: nickname,
 		Role:     role,
+		AvatarURL: avatarURL,
+		Bio:       bio,
+		Status:    status,
 	}
 }
 
@@ -71,5 +86,28 @@ func (u *User) Authenticate(password string) error {
 	if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password)); err != nil {
 		return ErrInvalidCredentials
 	}
+	return nil
+}
+
+// UpdateProfile 按传入字段更新用户资料，昵称不能仅由空白字符组成，头像地址和简介会去除首尾空白。
+func (u *User) UpdateProfile(nickname, avatarURL, bio *string) error {
+	if nickname == nil && avatarURL == nil && bio == nil {
+		return ErrEmptyProfileUpdate
+	}
+
+	if nickname != nil {
+		value := strings.TrimSpace(*nickname)
+		if value == "" {
+			return ErrEmptyNickname
+		}
+		u.Nickname = value
+	}
+	if avatarURL != nil {
+		u.AvatarURL = strings.TrimSpace(*avatarURL)
+	}
+	if bio != nil {
+		u.Bio = strings.TrimSpace(*bio)
+	}
+
 	return nil
 }
