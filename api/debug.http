@@ -1,0 +1,60 @@
+@baseUrl = http://127.0.0.1:9000
+@account = debug_user_20260827
+@password = DebugPassword123!
+@nickname = 调试用户
+
+### 健康检查：预期返回 200
+GET {{baseUrl}}/health
+Accept: application/json
+
+### 注册用户：首次执行预期返回 201；若账号已存在则修改 @account 后重试
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+Accept: application/json
+
+{
+  "account": "{{account}}",
+  "password": "{{password}}",
+  "nickname": "{{nickname}}"
+}
+
+### 用户登录：使用上方已注册的账号，预期返回 200 和 access_token
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+Accept: application/json
+
+{
+  "account": "{{account}}",
+  "password": "{{password}}"
+}
+
+### 重复注册：在账号已注册后执行，预期返回 409
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+Accept: application/json
+
+{
+  "account": "{{account}}",
+  "password": "{{password}}",
+  "nickname": "{{nickname}}"
+}
+
+### 错误密码登录：预期返回 401
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+Accept: application/json
+
+{
+  "account": "{{account}}",
+  "password": "wrong-password"
+}
+
+### 缺少必填字段：预期返回 400
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+Accept: application/json
+
+{
+  "account": "{{account}}",
+  "password": "{{password}}"
+}
