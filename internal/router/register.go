@@ -10,6 +10,7 @@ import (
 	"github.com/inumoroha/video-feed/internal/handler"
 	userhandler "github.com/inumoroha/video-feed/internal/handler/user"
 	userpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/user"
+	"github.com/inumoroha/video-feed/internal/middleware"
 
 	"gorm.io/gorm"
 )
@@ -41,9 +42,22 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 
 	g.GET("/health", handler.Health)
 
-	auth := g.Group("/auth")
-	auth.POST("/register", userHandler.Register)
-	auth.POST("/login", userHandler.Login)
+	registerRoutes(g, userHandler, jwtManager)
 
 	return nil
+}
+
+// registerRoutes 注册公开认证接口和经过 JWT 认证的用户接口。
+func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, jwtManager *authjwt.Manager) {
+	authMiddleware := middleware.NewJWTAuthMiddleware(jwtManager)
+	api := g.Group("/api")
+
+	auth := api.Group("/auth")
+	auth.POST("/register", userHandler.Register)
+	auth.POST("/login/password", userHandler.Login)
+	auth.POST("/logout", authMiddleware, userHandler.Logout)
+
+	users := api.Group("/users", authMiddleware)
+	users.GET("/me", userHandler.Me)
+	users.PATCH("/me", userHandler.UpdateMe)
 }

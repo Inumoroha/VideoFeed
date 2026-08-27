@@ -8,7 +8,7 @@ GET {{baseUrl}}/health
 Accept: application/json
 
 ### 注册用户：首次执行预期返回 201；若账号已存在则修改 @account 后重试
-POST {{baseUrl}}/auth/register
+POST {{baseUrl}}/api/auth/register
 Content-Type: application/json
 Accept: application/json
 
@@ -19,7 +19,7 @@ Accept: application/json
 }
 
 ### 用户登录：使用上方已注册的账号，预期返回 200 和 access_token
-POST {{baseUrl}}/auth/login
+POST {{baseUrl}}/api/auth/login/password
 Content-Type: application/json
 Accept: application/json
 
@@ -29,7 +29,7 @@ Accept: application/json
 }
 
 ### 重复注册：在账号已注册后执行，预期返回 409
-POST {{baseUrl}}/auth/register
+POST {{baseUrl}}/api/auth/register
 Content-Type: application/json
 Accept: application/json
 
@@ -40,7 +40,7 @@ Accept: application/json
 }
 
 ### 错误密码登录：预期返回 401
-POST {{baseUrl}}/auth/login
+POST {{baseUrl}}/api/auth/login/password
 Content-Type: application/json
 Accept: application/json
 
@@ -50,7 +50,7 @@ Accept: application/json
 }
 
 ### 缺少必填字段：预期返回 400
-POST {{baseUrl}}/auth/register
+POST {{baseUrl}}/api/auth/register
 Content-Type: application/json
 Accept: application/json
 

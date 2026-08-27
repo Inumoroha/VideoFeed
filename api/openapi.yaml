@@ -19,7 +19,7 @@ paths:
                 $ref: '#/components/schemas/HealthResponse'
               example:
                 status: healthy
-  /auth/register:
+  /api/auth/register:
     post:
       tags:
         - Authentication
@@ -42,9 +42,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MessageResponse'
+                $ref: '#/components/schemas/UserProfileResponse'
               example:
-                message: registration successful
+                id: 1
+                account: demo_user
+                nickname: Demo User
+                role: user
+                bio: ""
+                status: 1
+                avatar_url: ""
         '400':
           $ref: '#/components/responses/InvalidRequest'
         '409':
@@ -57,7 +63,7 @@ paths:
                 error: account already exists
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /auth/login:
+  /api/auth/login/password:
     post:
       tags:
         - Authentication
@@ -96,7 +102,88 @@ paths:
                 error: invalid credentials
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: Log out the current user
+      operationId: logoutUser
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Logout successful; the client must discard the access token
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/users/me:
+    get:
+      tags:
+        - User
+      summary: Get the current user profile
+      operationId: getCurrentUserProfile
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileResponse'
+              example:
+                id: 1
+                account: demo_user
+                nickname: Demo User
+                role: user
+                bio: ""
+                status: 1
+                avatar_url: ""
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/UserNotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    patch:
+      tags:
+        - User
+      summary: Update the current user profile
+      operationId: updateCurrentUserProfile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+            example:
+              nickname: Updated User
+              bio: Updated profile
+              avatar_url: https://example.com/avatar.png
+      responses:
+        '200':
+          description: Updated user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/UserNotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     HealthResponse:
       type: object
@@ -155,6 +242,50 @@ components:
           type: integer
           format: int64
           example: 900
+    UserProfileResponse:
+      type: object
+      required:
+        - id
+        - account
+        - nickname
+        - role
+        - bio
+        - status
+        - avatar_url
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        account:
+          type: string
+          example: demo_user
+        nickname:
+          type: string
+          example: Demo User
+        role:
+          type: string
+          example: user
+        bio:
+          type: string
+          example: ""
+        status:
+          type: integer
+          example: 1
+        avatar_url:
+          type: string
+          example: ""
+    UpdateProfileRequest:
+      type: object
+      properties:
+        nickname:
+          type: string
+          minLength: 1
+          pattern: '.*\S.*'
+        avatar_url:
+          type: string
+        bio:
+          type: string
     MessageResponse:
       type: object
       required:
@@ -186,3 +317,19 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
           example:
             error: internal server error
+    Unauthorized:
+      description: Authentication is required or the access token is invalid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: invalid access token
+    UserNotFound:
+      description: User was not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: user not found
