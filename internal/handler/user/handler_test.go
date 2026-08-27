@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	applicationuser "github.com/inumoroha/video-feed/internal/application/user"
 	domainuser "github.com/inumoroha/video-feed/internal/domain/user"
+	"github.com/inumoroha/video-feed/internal/middleware"
 )
 
 // testRepository 提供用户 Handler 测试所需的用户仓储实现。
@@ -30,6 +31,20 @@ func (r *testRepository) FindByAccount(_ context.Context, account string) (*doma
 		return nil, domainuser.ErrUserNotFound
 	}
 	return r.user, nil
+}
+
+// FindByID 按 ID 返回预设用户或未找到错误。
+func (r *testRepository) FindByID(_ context.Context, id int64) (*domainuser.User, error) {
+	if r.user == nil || r.user.ID != id {
+		return nil, domainuser.ErrUserNotFound
+	}
+	return r.user, nil
+}
+
+// UpdateProfile 保存测试中的用户资料更新。
+func (r *testRepository) UpdateProfile(_ context.Context, user *domainuser.User) error {
+	r.user = user
+	return nil
 }
 
 // testTokenSigner 提供用户 Handler 测试所需的令牌签发能力。
@@ -87,6 +102,101 @@ func TestRegisterWithNilServiceReturnsInternalServerError(t *testing.T) {
 
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("Register() status = %d, want %d", recorder.Code, http.StatusInternalServerError)
+	}
+}
+
+// TestMeReturnsUnauthorizedWithoutUserID 验证当前用户资料接口缺少认证用户 ID 时返回 401。
+func TestMeReturnsUnauthorizedWithoutUserID(t *testing.T) {
+	service := applicationuser.NewService(&testRepository{}, testTokenSigner{})
+	recorder := httptest.NewRecorder()
+	ginContext := newTestContext(http.MethodGet, "/users/me", "", recorder)
+
+	NewHandler(service).Me(ginContext)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("Me() status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+}
+
+// TestMeReturnsProfile 验证当前用户资料接口返回认证用户的资料。
+func TestMeReturnsProfile(t *testing.T) {
+	user := &domainuser.User{
+		ID:        1,
+		Account:   "account",
+		Nickname:  "nickname",
+		Role:      domainuser.RoleUser,
+		Bio:       "bio",
+		AvatarURL: "https://example.com/avatar.png",
+		Status:    domainuser.StatusNormal,
+	}
+	service := applicationuser.NewService(&testRepository{user: user}, testTokenSigner{})
+	recorder := httptest.NewRecorder()
+	ginContext := newTestContext(http.MethodGet, "/users/me", "", recorder)
+	ginContext.Set(middleware.ContextUserIDKey, int64(1))
+
+	NewHandler(service).Me(ginContext)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("Me() status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	response := recorder.Body.String()
+	for _, field := range []string{`"id":1`, `"account":"account"`, `"nickname":"nickname"`, `"bio":"bio"`, `"status":1`} {
+		if !strings.Contains(response, field) {
+			t.Fatalf("Me() response = %s, missing %s", response, field)
+		}
+	}
+}
+
+// TestMeWithNilServiceReturnsInternalServerError 验证当前用户资料接口缺少应用服务时不会 panic。
+func TestMeWithNilServiceReturnsInternalServerError(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ginContext := newTestContext(http.MethodGet, "/users/me", "", recorder)
+	ginContext.Set(middleware.ContextUserIDKey, int64(1))
+
+	NewHandler(nil).Me(ginContext)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("Me() status = %d, want %d", recorder.Code, http.StatusInternalServerError)
+	}
+}
+
+// TestUpdateMeReturnsBadRequestForEmptyPatch 验证当前用户资料接口拒绝没有更新字段的请求。
+func TestUpdateMeReturnsBadRequestForEmptyPatch(t *testing.T) {
+	user := &domainuser.User{ID: 1, Nickname: "nickname"}
+	service := applicationuser.NewService(&testRepository{user: user}, testTokenSigner{})
+	recorder := httptest.NewRecorder()
+	ginContext := newTestContext(http.MethodPatch, "/users/me", `{}`, recorder)
+	ginContext.Set(middleware.ContextUserIDKey, int64(1))
+
+	NewHandler(service).UpdateMe(ginContext)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("UpdateMe() status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+}
+
+// TestUpdateMeWithNilServiceReturnsInternalServerError 验证资料更新接口缺少应用服务时不会 panic。
+func TestUpdateMeWithNilServiceReturnsInternalServerError(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ginContext := newTestContext(http.MethodPatch, "/users/me", `{}`, recorder)
+	ginContext.Set(middleware.ContextUserIDKey, int64(1))
+
+	NewHandler(nil).UpdateMe(ginContext)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("UpdateMe() status = %d, want %d", recorder.Code, http.StatusInternalServerError)
+	}
+}
+
+// TestLogoutReturnsNoContent 验证退出登录接口返回无内容响应。
+func TestLogoutReturnsNoContent(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ginContext := newTestContext(http.MethodPost, "/auth/logout", "", recorder)
+
+	NewHandler(nil).Logout(ginContext)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("Logout() status = %d, want %d", recorder.Code, http.StatusNoContent)
 	}
 }
 

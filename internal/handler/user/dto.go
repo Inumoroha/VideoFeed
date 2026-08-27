@@ -13,6 +13,13 @@ type LoginByPasswordRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
+// UpdateProfileRequest 表示用户资料更新请求。
+type UpdateProfileRequest struct {
+	Nickname  *string `json:"nickname"`
+	AvatarURL *string `json:"avatar_url"`
+	Bio       *string `json:"bio"`
+}
+
 // tokenResponse 表示登录成功后返回的访问令牌信息。
 type tokenResponse struct {
 	AccessToken      string `json:"access_token"`
@@ -22,8 +29,11 @@ type tokenResponse struct {
 
 // userProfileResponse 表示对外返回的用户基本资料。
 type userProfileResponse struct {
-	ID       int64  `json:"id"`
-	Account  string `json:"account"`
-	Nickname string `json:"nickname"`
-	Role     string `json:"role"`
+	ID        int64  `json:"id"`
+	Account   string `json:"account"`
+	Nickname  string `json:"nickname"`
+	Role      string `json:"role"`
+	Bio       string `json:"bio"`
+	Status    int    `json:"status"`
+	AvatarURL string `json:"avatar_url"`
 }
