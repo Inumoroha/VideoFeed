@@ -32,20 +32,20 @@ func NewService(repo domainuser.Repository, signer TokenSigner) *Service {
 }
 
 // Register 创建用户并将其保存到用户仓储中。
-func (s *Service) Register(ctx context.Context, account, password, nickname string) error {
+func (s *Service) Register(ctx context.Context, account, password, nickname string) (*Profile, error) {
 	user, err := domainuser.New(account, password, nickname)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	err = s.repo.Save(ctx, user)
 	if err != nil {
 		if errors.Is(err, domainuser.ErrAccountAlreadyExists) {
-			return domainuser.ErrAccountAlreadyExists
+			return nil, domainuser.ErrAccountAlreadyExists
 		}
-		return ErrSaveUserFailed
+		return nil, ErrSaveUserFailed
 	}
-	return nil
+	return profileFromUser(user), nil
 }
 
 // Login 验证用户凭据并签发访问令牌，返回令牌类型和有效时长。
@@ -76,4 +76,60 @@ func (s *Service) Login(ctx context.Context, account, password string) (*LoginRe
 		TokenType:        "Bearer",
 		ExpiresInSeconds: int64(s.signer.AccessTTL().Seconds()),
 	}, nil
+}
+
+// GetProfile 根据用户 ID 查询用户资料，并将仓储错误转换为应用层错误。
+func (s *Service) GetProfile(ctx context.Context, userID int64) (*Profile, error) {
+	if userID <= 0 {
+		return nil, domainuser.ErrInvalidUserID
+	}
+
+	user, err := s.repo.FindByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, domainuser.ErrUserNotFound) {
+			return nil, domainuser.ErrUserNotFound
+		}
+		return nil, ErrLoadUserFailed
+	}
+
+	return profileFromUser(user), nil
+}
+
+// UpdateProfile 查询用户、更新资料并保存，返回更新后的用户资料。
+func (s *Service) UpdateProfile(ctx context.Context, userID int64, nickname, avatarURL, bio *string) (*Profile, error) {
+	if userID <= 0 {
+		return nil, domainuser.ErrInvalidUserID
+	}
+
+	user, err := s.repo.FindByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, domainuser.ErrUserNotFound) {
+			return nil, domainuser.ErrUserNotFound
+		}
+		return nil, ErrLoadUserFailed
+	}
+	if err := user.UpdateProfile(nickname, avatarURL, bio); err != nil {
+		return nil, err
+	}
+	if err := s.repo.UpdateProfile(ctx, user); err != nil {
+		if errors.Is(err, domainuser.ErrUserNotFound) {
+			return nil, domainuser.ErrUserNotFound
+		}
+		return nil, ErrUpdateUserFailed
+	}
+
+	return profileFromUser(user), nil
+}
+
+// profileFromUser 将领域用户转换为应用层用户资料。
+func profileFromUser(user *domainuser.User) *Profile {
+	return &Profile{
+		ID:        user.ID,
+		Account:   user.Account,
+		Nickname:  user.Nickname,
+		AvatarURL: user.AvatarURL,
+		Bio:       user.Bio,
+		Status:    user.Status,
+		Role:      user.Role,
+	}
 }

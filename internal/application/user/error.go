@@ -9,4 +9,6 @@ var (
 	ErrSaveUserFailed = errors.New("failed to save user")
 	// ErrSignAccessTokenFailed 表示签发访问令牌失败。
 	ErrSignAccessTokenFailed = errors.New("failed to sign access token")
+	// ErrUpdateUserFailed 表示更新用户失败。
+	ErrUpdateUserFailed = errors.New("failed to update user")
 )

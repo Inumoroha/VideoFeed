@@ -13,4 +13,7 @@ type Profile struct {
 	Account  string
 	Nickname string
 	Role     string
+	Bio      string
+	Status   int
+	AvatarURL string
 }
