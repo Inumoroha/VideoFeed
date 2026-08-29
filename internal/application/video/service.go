@@ -8,6 +8,8 @@ import (
 	domainvideo "github.com/inumoroha/video-feed/internal/domain/video"
 )
 
+const MaxListLimit = 100
+
 type Service struct {
 	repo domainvideo.Repository
 }
@@ -94,8 +96,8 @@ func (s *Service) ListByAuthor(ctx context.Context, authorID int64, limit, offse
 	if offset < 0 {
 		return nil, domainvideo.ErrInvalidOffset
 	}
-	if limit > 100 {
-		limit = 100
+	if limit > MaxListLimit {
+		limit = MaxListLimit
 	}
 
 	videos, err := s.repo.ListByAuthor(ctx, authorID, limit, offset)
