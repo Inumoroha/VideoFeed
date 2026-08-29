@@ -139,7 +139,7 @@ func TestSaveRejectsDuplicateAccount(t *testing.T) {
 func TestUpdateProfileRejectsNilUser(t *testing.T) {
 	repository, _ := NewMockRepository(t)
 
-	err := repository.UpdateProfile(nil, nil)
+	err := repository.UpdateProfile(context.TODO(), nil)
 	if err == nil || err.Error() != "user is nil" {
 		t.Fatalf("UpdateProfile() error = %v, want nil user error", err)
 	}
@@ -149,7 +149,7 @@ func TestUpdateProfileRejectsNilUser(t *testing.T) {
 func TestUpdateProfileRejectsUninitializedRepository(t *testing.T) {
 	var repository *Repository
 
-	err := repository.UpdateProfile(nil, &domainuser.User{ID: 1})
+	err := repository.UpdateProfile(context.TODO(), &domainuser.User{ID: 1})
 	if err == nil || err.Error() != "user repository is not initialized" {
 		t.Fatalf("UpdateProfile() error = %v, want uninitialized repository error", err)
 	}
@@ -184,7 +184,7 @@ func TestUpdateProfilePersistsChangedFields(t *testing.T) {
 		WithArgs(user.AvatarURL, user.Bio, user.Nickname, sqlmock.AnyArg(), user.ID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	if err := repository.UpdateProfile(nil, user); err != nil {
+	if err := repository.UpdateProfile(context.TODO(), user); err != nil {
 		t.Fatalf("UpdateProfile() error = %v", err)
 	}
 
