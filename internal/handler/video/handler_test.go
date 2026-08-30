@@ -115,7 +115,7 @@ func TestListMineCapsLimitInResponse(t *testing.T) {
 	repository := &handlerTestRepository{}
 	handler := NewHandler(applicationvideo.NewService(repository))
 	recorder := httptest.NewRecorder()
-	ctx := newVideoTestContext(http.MethodGet, "/api/users/me/videos?limit=1000&offset=2", "", recorder)
+	ctx := newVideoTestContext(http.MethodGet, "/api/videos/mine?limit=1000&offset=2", "", recorder)
 	ctx.Set(middleware.ContextUserIDKey, int64(7))
 
 	handler.ListMine(ctx)

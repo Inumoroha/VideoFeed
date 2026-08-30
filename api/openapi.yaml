@@ -299,7 +299,7 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/users/me/videos:
+  /api/videos/mine:
     get:
       tags:
         - Video
