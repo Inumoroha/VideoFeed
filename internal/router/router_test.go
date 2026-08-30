@@ -4,12 +4,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	authjwt "github.com/inumoroha/video-feed/internal/auth/jwt"
 	"github.com/inumoroha/video-feed/internal/config"
 	userhandler "github.com/inumoroha/video-feed/internal/handler/user"
-	"time"
+	videohandler "github.com/inumoroha/video-feed/internal/handler/video"
 )
 
 // TestSetupRejectsNilConfig 验证路由初始化会拒绝空应用配置。
@@ -47,7 +48,7 @@ func TestRegisterRoutesRegistersExpectedPaths(t *testing.T) {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 
-	registerRoutes(engine, userhandler.NewHandler(nil), manager)
+	registerRoutes(engine, userhandler.NewHandler(nil), videohandler.NewHandler(nil), manager)
 	routes := make(map[string]bool)
 	for _, route := range engine.Routes() {
 		routes[route.Method+" "+route.Path] = true
@@ -59,6 +60,11 @@ func TestRegisterRoutesRegistersExpectedPaths(t *testing.T) {
 		http.MethodPost + " /api/auth/logout",
 		http.MethodGet + " /api/users/me",
 		http.MethodPatch + " /api/users/me",
+		http.MethodPost + " /api/videos",
+		http.MethodGet + " /api/videos/mine",
+		http.MethodGet + " /api/videos/:videoId",
+		http.MethodDelete + " /api/videos/:videoId",
+		http.MethodGet + " /api/users/:userId/videos",
 	} {
 		if !routes[route] {
 			t.Errorf("missing route %q", route)
@@ -81,7 +87,7 @@ func TestRegisterRoutesProtectsUserEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
-	registerRoutes(engine, userhandler.NewHandler(nil), manager)
+	registerRoutes(engine, userhandler.NewHandler(nil), videohandler.NewHandler(nil), manager)
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/users/me", nil)
