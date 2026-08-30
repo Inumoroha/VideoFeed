@@ -68,11 +68,11 @@ func TestListTimeFeedMapsPublishedVideos(t *testing.T) {
 	}
 }
 
-// TestListTimeFeedCapsLimit 验证超过领域上限的分页数量会被限制。
+// TestListTimeFeedCapsLimit 验证查询数量会保留一条额外记录用于判断是否存在下一页。
 func TestListTimeFeedCapsLimit(t *testing.T) {
 	repository, mock := newMockRepository(t)
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id AS video_id, author_id, title, media_url, cover_url, like_count, comment_count, favorite_count, published_at FROM "videos" WHERE status = $1 AND published_at IS NOT NULL ORDER BY published_at DESC,id DESC LIMIT $2`)).
-		WithArgs(domainvideo.StatusPublished, domainfeed.MaxLimit).
+		WithArgs(domainvideo.StatusPublished, domainfeed.MaxLimit+1).
 		WillReturnRows(sqlmock.NewRows([]string{"video_id", "author_id", "title", "media_url", "cover_url", "like_count", "comment_count", "favorite_count", "published_at"}))
 
 	if _, err := repository.ListTimeFeed(context.Background(), nil, domainfeed.MaxLimit+1); err != nil {

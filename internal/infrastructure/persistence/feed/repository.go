@@ -43,8 +43,8 @@ func (r *Repository) ListTimeFeed(ctx context.Context, cursor *domainfeed.TimeCu
 	if limit <= 0 {
 		return nil, domainfeed.ErrInvalidLimit
 	}
-	if limit > domainfeed.MaxLimit {
-		limit = domainfeed.MaxLimit
+	if limit > domainfeed.MaxLimit+1 {
+		limit = domainfeed.MaxLimit + 1
 	}
 	if err := cursor.Validate(); err != nil {
 		return nil, err
