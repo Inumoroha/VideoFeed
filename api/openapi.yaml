@@ -323,6 +323,94 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/feed/time:
+    get:
+      tags:
+        - Feed
+      summary: Get the chronological video feed
+      operationId: getTimeFeed
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/FeedLimit'
+        - $ref: '#/components/parameters/FeedCursor'
+      responses:
+        '200':
+          description: Chronological feed page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/feed/refresh:
+    get:
+      tags:
+        - Feed
+      summary: Refresh the chronological video feed
+      operationId: refreshTimeFeed
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/FeedLimit'
+      responses:
+        '200':
+          description: Refreshed feed page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/feed/view-events:
+    post:
+      tags:
+        - Feed
+      summary: Report a video viewing event
+      operationId: reportFeedViewEvent
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            maxLength: 128
+          description: Optional key used to safely retry the same event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ViewEventRequest'
+            example:
+              visitor_id: visitor-001
+              video_id: 3
+              event_type: VIEW
+              watch_ms: 3000
+      responses:
+        '201':
+          description: Viewing event created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ViewEventResponse'
+        '200':
+          description: Existing event returned for an idempotent retry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ViewEventResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 components:
   parameters:
     VideoLimit:
@@ -342,6 +430,23 @@ components:
         type: integer
         minimum: 0
         default: 0
+
+    FeedLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 20
+      description: Number of feed items to return; values above 100 are capped at 100.
+    FeedCursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+      description: Opaque cursor returned by the previous feed page.
 
   securitySchemes:
     bearerAuth:
@@ -558,6 +663,110 @@ components:
         items: []
         limit: 20
         offset: 0
+    FeedResponse:
+      type: object
+      required:
+        - items
+        - next_cursor
+        - has_more
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedItemResponse'
+        next_cursor:
+          type: string
+          description: Opaque cursor for the next page; empty when there is no next page.
+        has_more:
+          type: boolean
+      example:
+        items: []
+        next_cursor: ""
+        has_more: false
+    FeedItemResponse:
+      type: object
+      required:
+        - video_id
+        - author_id
+        - title
+        - media_url
+        - cover_url
+        - like_count
+        - comment_count
+        - favorite_count
+        - published_at
+      properties:
+        video_id:
+          type: integer
+          format: int64
+        author_id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        media_url:
+          type: string
+        cover_url:
+          type: string
+        like_count:
+          type: integer
+        comment_count:
+          type: integer
+        favorite_count:
+          type: integer
+        published_at:
+          type: string
+          format: date-time
+    ViewEventRequest:
+      type: object
+      required:
+        - video_id
+        - event_type
+      properties:
+        visitor_id:
+          type: string
+          maxLength: 128
+          description: Required when the request is not associated with a JWT user.
+        video_id:
+          type: integer
+          format: int64
+          minimum: 1
+        event_type:
+          type: string
+          description: Event type; accepted values are IMPRESSION, VIEW, or COMPLETE, case-insensitive.
+        watch_ms:
+          type: integer
+          minimum: 0
+          default: 0
+    ViewEventResponse:
+      type: object
+      required:
+        - id
+        - video_id
+        - event_type
+        - watch_ms
+        - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        visitor_id:
+          type: string
+        video_id:
+          type: integer
+          format: int64
+        event_type:
+          type: string
+          enum:
+            - IMPRESSION
+            - VIEW
+            - COMPLETE
+        watch_ms:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
     MessageResponse:
       type: object
       required:
