@@ -10,6 +10,17 @@ import (
 
 const ContextUserIDKey = "auth_user_id"
 
+// NewOptionalJWTAuthMiddleware 创建可选认证中间件，无令牌时允许访客请求继续执行。
+func NewOptionalJWTAuthMiddleware(jwtManager *authjwt.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if strings.TrimSpace(c.GetHeader("Authorization")) == "" {
+			c.Next()
+			return
+		}
+		NewJWTAuthMiddleware(jwtManager)(c)
+	}
+}
+
 // NewJWTAuthMiddleware 创建校验访问令牌并将用户 ID 写入 Gin 上下文的认证中间件。
 func NewJWTAuthMiddleware(jwtManager *authjwt.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
