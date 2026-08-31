@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	authjwt "github.com/inumoroha/video-feed/internal/auth/jwt"
 	"github.com/inumoroha/video-feed/internal/config"
+	feedhandler "github.com/inumoroha/video-feed/internal/handler/feed"
 	userhandler "github.com/inumoroha/video-feed/internal/handler/user"
 	videohandler "github.com/inumoroha/video-feed/internal/handler/video"
 )
@@ -48,7 +49,7 @@ func TestRegisterRoutesRegistersExpectedPaths(t *testing.T) {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 
-	registerRoutes(engine, userhandler.NewHandler(nil), videohandler.NewHandler(nil), manager)
+	registerRoutes(engine, userhandler.NewHandler(nil), videohandler.NewHandler(nil), feedhandler.NewHandler(nil), manager)
 	routes := make(map[string]bool)
 	for _, route := range engine.Routes() {
 		routes[route.Method+" "+route.Path] = true
@@ -65,6 +66,9 @@ func TestRegisterRoutesRegistersExpectedPaths(t *testing.T) {
 		http.MethodGet + " /api/videos/:videoId",
 		http.MethodDelete + " /api/videos/:videoId",
 		http.MethodGet + " /api/users/:userId/videos",
+		http.MethodGet + " /api/feed/time",
+		http.MethodGet + " /api/feed/refresh",
+		http.MethodPost + " /api/feed/view-events",
 	} {
 		if !routes[route] {
 			t.Errorf("missing route %q", route)
@@ -87,7 +91,7 @@ func TestRegisterRoutesProtectsUserEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
-	registerRoutes(engine, userhandler.NewHandler(nil), videohandler.NewHandler(nil), manager)
+	registerRoutes(engine, userhandler.NewHandler(nil), videohandler.NewHandler(nil), feedhandler.NewHandler(nil), manager)
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/users/me", nil)
