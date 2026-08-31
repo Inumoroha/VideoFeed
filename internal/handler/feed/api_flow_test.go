@@ -46,6 +46,12 @@ type viewEventAPIResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// memoryFeedCursor 保存内存仓储中的分页位置和过期时间。
+type memoryFeedCursor struct {
+	cursor    domainfeed.TimeCursor
+	expiresAt time.Time
+}
+
 // memoryFeedRepo 提供信息流 API 流程测试使用的并发安全内存仓储。
 type memoryFeedRepo struct {
 	mu          sync.Mutex
@@ -53,6 +59,7 @@ type memoryFeedRepo struct {
 	nextEventID int64
 	eventsByID  map[int64]*domainfeed.ViewEvent
 	eventsByKey map[string]int64
+	cursors     map[string]memoryFeedCursor
 }
 
 // newMemoryFeedRepo 创建用于信息流 HTTP 流程测试的内存仓储。
@@ -62,6 +69,7 @@ func newMemoryFeedRepo(items []*domainfeed.FeedItem) *memoryFeedRepo {
 		nextEventID: 1,
 		eventsByID:  map[int64]*domainfeed.ViewEvent{},
 		eventsByKey: map[string]int64{},
+		cursors:     map[string]memoryFeedCursor{},
 	}
 }
 
@@ -87,6 +95,30 @@ func (r *memoryFeedRepo) ListTimeFeed(_ context.Context, cursor *domainfeed.Time
 		limit = len(items)
 	}
 	return items[:limit], nil
+}
+
+// SaveTimeCursor 保存分页游标及其过期时间。
+func (r *memoryFeedRepo) SaveTimeCursor(_ context.Context, token string, cursor *domainfeed.TimeCursor, expiresAt time.Time) error {
+	if token == "" || cursor == nil || !expiresAt.After(time.Now()) {
+		return domainfeed.ErrInvalidCursor
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cursors[token] = memoryFeedCursor{cursor: *cursor, expiresAt: expiresAt}
+	return nil
+}
+
+// FindTimeCursor 返回未过期的分页游标。
+func (r *memoryFeedRepo) FindTimeCursor(_ context.Context, token string, now time.Time) (*domainfeed.TimeCursor, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	stored, exists := r.cursors[token]
+	if !exists || !stored.expiresAt.After(now) {
+		return nil, domainfeed.ErrTimeCursorNotFound
+	}
+	cursor := stored.cursor
+	return &cursor, nil
 }
 
 // SaveViewEvent 保存观看事件并模拟数据库生成 ID 和创建时间。

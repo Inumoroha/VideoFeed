@@ -446,7 +446,7 @@ components:
       required: false
       schema:
         type: string
-      description: Opaque cursor returned by the previous feed page.
+      description: Opaque server-side cursor returned by the previous feed page. It expires 24 hours after creation; expired or unknown cursors return 400.
 
   securitySchemes:
     bearerAuth:
@@ -676,7 +676,7 @@ components:
             $ref: '#/components/schemas/FeedItemResponse'
         next_cursor:
           type: string
-          description: Opaque cursor for the next page; empty when there is no next page.
+          description: Opaque server-side cursor for the next page; it expires after 24 hours and is empty when there is no next page.
         has_more:
           type: boolean
       example:

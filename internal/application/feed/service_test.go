@@ -5,26 +5,58 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
 )
 
+// serviceTestRepository 提供信息流应用服务测试所需的内存仓储实现。
 type serviceTestRepository struct {
-	items     []*domainfeed.FeedItem
-	listLimit int
-	findEvent *domainfeed.ViewEvent
-	findErr   error
-	saveEvent *domainfeed.ViewEvent
-	saveErr   error
-	findCalls int
+	items             []*domainfeed.FeedItem
+	listLimit         int
+	listCursor        *domainfeed.TimeCursor
+	savedCursor       *domainfeed.TimeCursor
+	savedCursorToken  string
+	savedCursorExpiry time.Time
+	saveCursorErr     error
+	findCursor        *domainfeed.TimeCursor
+	findCursorErr     error
+	findEvent         *domainfeed.ViewEvent
+	findErr           error
+	saveEvent         *domainfeed.ViewEvent
+	saveErr           error
+	findCalls         int
 }
 
 // ListTimeFeed 返回测试信息流并记录服务请求的查询数量。
-func (r *serviceTestRepository) ListTimeFeed(_ context.Context, _ *domainfeed.TimeCursor, limit int) ([]*domainfeed.FeedItem, error) {
+func (r *serviceTestRepository) ListTimeFeed(_ context.Context, cursor *domainfeed.TimeCursor, limit int) ([]*domainfeed.FeedItem, error) {
 	r.listLimit = limit
+	r.listCursor = cloneTimeCursor(cursor)
 	return r.items, nil
+}
+
+// SaveTimeCursor 记录服务生成的分页游标。
+func (r *serviceTestRepository) SaveTimeCursor(_ context.Context, token string, cursor *domainfeed.TimeCursor, expiresAt time.Time) error {
+	r.savedCursorToken = token
+	r.savedCursor = cloneTimeCursor(cursor)
+	r.savedCursorExpiry = expiresAt
+	return r.saveCursorErr
+}
+
+// FindTimeCursor 返回预设或此前保存的分页游标。
+func (r *serviceTestRepository) FindTimeCursor(_ context.Context, token string, now time.Time) (*domainfeed.TimeCursor, error) {
+	if r.findCursorErr != nil {
+		return nil, r.findCursorErr
+	}
+	if r.findCursor != nil {
+		return cloneTimeCursor(r.findCursor), nil
+	}
+	if token == r.savedCursorToken && r.savedCursor != nil && r.savedCursorExpiry.After(now) {
+		return cloneTimeCursor(r.savedCursor), nil
+	}
+	return nil, domainfeed.ErrTimeCursorNotFound
 }
 
 // SaveViewEvent 保存测试观看事件并记录传入的领域对象。
@@ -54,6 +86,8 @@ func TestServiceRejectsUninitializedService(t *testing.T) {
 func TestGetTimeFeedUsesLookaheadAndBuildsCursor(t *testing.T) {
 	repository := &serviceTestRepository{items: makeFeedItems(domainfeed.MaxLimit + 1)}
 	service := NewService(repository)
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
 
 	result, err := service.GetTimeFeed(context.TODO(), "", domainfeed.MaxLimit)
 	if err != nil {
@@ -65,8 +99,11 @@ func TestGetTimeFeedUsesLookaheadAndBuildsCursor(t *testing.T) {
 	if len(result.Items) != domainfeed.MaxLimit || !result.HasMore || result.NextCursor == "" {
 		t.Fatalf("GetTimeFeed() result = %+v, want capped items with next cursor", result)
 	}
-	if _, err := parseTimeCursor(result.NextCursor); err != nil {
-		t.Fatalf("next cursor cannot be parsed: %v", err)
+	if !strings.HasPrefix(result.NextCursor, timeCursorTokenPrefix) || repository.savedCursor == nil {
+		t.Fatalf("next cursor = %q, want persisted cursor", result.NextCursor)
+	}
+	if !repository.savedCursorExpiry.Equal(now.Add(timeCursorTTL)) {
+		t.Fatalf("saved cursor expiry = %s, want %s", repository.savedCursorExpiry, now.Add(timeCursorTTL))
 	}
 }
 
@@ -100,6 +137,45 @@ func TestGetTimeFeedRejectsInvalidCursor(t *testing.T) {
 	_, err := NewService(&serviceTestRepository{}).GetTimeFeed(context.TODO(), payload, 20)
 	if !errors.Is(err, domainfeed.ErrInvalidCursor) {
 		t.Fatalf("GetTimeFeed() error = %v, want %v", err, domainfeed.ErrInvalidCursor)
+	}
+}
+
+// TestGetTimeFeedUsesPersistedCursor 验证服务会读取服务端保存的分页游标。
+func TestGetTimeFeedUsesPersistedCursor(t *testing.T) {
+	repository := &serviceTestRepository{items: makeFeedItems(2)}
+	service := NewService(repository)
+
+	firstPage, err := service.GetTimeFeed(context.TODO(), "", 1)
+	if err != nil {
+		t.Fatalf("GetTimeFeed() first page error = %v", err)
+	}
+	if firstPage.NextCursor == "" {
+		t.Fatal("GetTimeFeed() first page did not return a cursor")
+	}
+
+	if _, err := service.GetTimeFeed(context.TODO(), firstPage.NextCursor, 1); err != nil {
+		t.Fatalf("GetTimeFeed() persisted cursor error = %v", err)
+	}
+	if repository.listCursor == nil || repository.savedCursor == nil || repository.listCursor.VideoID != repository.savedCursor.VideoID || !repository.listCursor.PublishedAt.Equal(repository.savedCursor.PublishedAt) {
+		t.Fatalf("ListTimeFeed() cursor = %+v, want saved cursor %+v", repository.listCursor, repository.savedCursor)
+	}
+}
+
+// TestGetTimeFeedRejectsExpiredPersistedCursor 验证服务会拒绝不存在或已过期的服务端游标。
+func TestGetTimeFeedRejectsExpiredPersistedCursor(t *testing.T) {
+	service := NewService(&serviceTestRepository{})
+	_, err := service.GetTimeFeed(context.TODO(), timeCursorTokenPrefix+"expired", 20)
+	if !errors.Is(err, domainfeed.ErrInvalidCursor) {
+		t.Fatalf("GetTimeFeed() error = %v, want %v", err, domainfeed.ErrInvalidCursor)
+	}
+}
+
+// TestGetTimeFeedReturnsErrorWhenCursorCannotBeSaved 验证游标保存失败时不会返回无法继续分页的结果。
+func TestGetTimeFeedReturnsErrorWhenCursorCannotBeSaved(t *testing.T) {
+	repository := &serviceTestRepository{items: makeFeedItems(2), saveCursorErr: errors.New("database unavailable")}
+	_, err := NewService(repository).GetTimeFeed(context.TODO(), "", 1)
+	if !errors.Is(err, ErrSaveTimeCursorFailed) {
+		t.Fatalf("GetTimeFeed() error = %v, want %v", err, ErrSaveTimeCursorFailed)
 	}
 }
 
@@ -178,6 +254,15 @@ func makeFeedItems(count int) []*domainfeed.FeedItem {
 		})
 	}
 	return items
+}
+
+// cloneTimeCursor 复制分页游标，避免测试仓储共享可变指针。
+func cloneTimeCursor(cursor *domainfeed.TimeCursor) *domainfeed.TimeCursor {
+	if cursor == nil {
+		return nil
+	}
+	cloned := *cursor
+	return &cloned
 }
 
 var _ domainfeed.Repository = (*serviceTestRepository)(nil)

@@ -2,6 +2,22 @@ package feed
 
 import "time"
 
+// FeedCursorModel 表示服务端保存的信息流分页游标及其有效期。
+type FeedCursorModel struct {
+	ID          int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	Scene       string    `gorm:"column:scene;size:32;not null;index:idx_scene_expired,priority:1"`
+	CursorToken string    `gorm:"column:cursor_token;size:128;not null;uniqueIndex:uk_cursor_token"`
+	PublishedAt time.Time `gorm:"column:published_at;not null"`
+	VideoID     int64     `gorm:"column:video_id;not null"`
+	ExpiredAt   time.Time `gorm:"column:expired_at;not null;index:idx_scene_expired,priority:2"`
+	CreatedAt   time.Time `gorm:"column:created_at;autoCreateTime"`
+}
+
+// TableName 返回分页游标对应的数据表名称。
+func (FeedCursorModel) TableName() string {
+	return "feed_cursor"
+}
+
 // FeedViewEventModel 表示用户或访客的视频观看事件持久化记录。
 type FeedViewEventModel struct {
 	ID             int64     `gorm:"column:id;primaryKey;autoIncrement"`

@@ -27,6 +27,12 @@ func TestRepositoryRejectsUninitializedRepository(t *testing.T) {
 	if _, err := repository.FindViewEventByIdempotencyKey(context.TODO(), "key"); err == nil || err.Error() != "feed repository is not initialized" {
 		t.Fatalf("FindViewEventByIdempotencyKey() error = %v, want uninitialized repository error", err)
 	}
+	if err := repository.SaveTimeCursor(context.TODO(), "cursor", &domainfeed.TimeCursor{}, time.Now().Add(time.Hour)); err == nil || err.Error() != "feed repository is not initialized" {
+		t.Fatalf("SaveTimeCursor() error = %v, want uninitialized repository error", err)
+	}
+	if _, err := repository.FindTimeCursor(context.TODO(), "cursor", time.Now()); err == nil || err.Error() != "feed repository is not initialized" {
+		t.Fatalf("FindTimeCursor() error = %v, want uninitialized repository error", err)
+	}
 }
 
 // TestRepositoryRejectsInvalidInput 验证仓储会拒绝非法分页、游标和空事件参数。
@@ -44,6 +50,12 @@ func TestRepositoryRejectsInvalidInput(t *testing.T) {
 	}
 	if _, err := repository.FindViewEventByIdempotencyKey(context.TODO(), " "); !errors.Is(err, domainfeed.ErrViewEventNotFound) {
 		t.Fatalf("FindViewEventByIdempotencyKey() error = %v, want %v", err, domainfeed.ErrViewEventNotFound)
+	}
+	if err := repository.SaveTimeCursor(context.TODO(), "", &domainfeed.TimeCursor{}, time.Now().Add(time.Hour)); !errors.Is(err, domainfeed.ErrInvalidCursor) {
+		t.Fatalf("SaveTimeCursor() error = %v, want %v", err, domainfeed.ErrInvalidCursor)
+	}
+	if _, err := repository.FindTimeCursor(context.TODO(), "cursor", time.Time{}); !errors.Is(err, domainfeed.ErrInvalidCursor) {
+		t.Fatalf("FindTimeCursor() error = %v, want %v", err, domainfeed.ErrInvalidCursor)
 	}
 }
 
@@ -77,6 +89,66 @@ func TestListTimeFeedCapsLimit(t *testing.T) {
 
 	if _, err := repository.ListTimeFeed(context.Background(), nil, domainfeed.MaxLimit+1); err != nil {
 		t.Fatalf("ListTimeFeed() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations were not met: %v", err)
+	}
+}
+
+// TestSaveTimeCursorPersistsCursor 验证分页游标会保存查询位置和过期时间。
+func TestSaveTimeCursorPersistsCursor(t *testing.T) {
+	repository, mock := newMockRepository(t)
+	publishedAt := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
+	expiresAt := publishedAt.Add(24 * time.Hour)
+	cursor := &domainfeed.TimeCursor{PublishedAt: publishedAt, VideoID: 7}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO "feed_cursor" ("scene","cursor_token","published_at","video_id","expired_at","created_at") VALUES ($1,$2,$3,$4,$5,$6) RETURNING "id"`)).
+		WithArgs(domainfeed.TimeCursorScene, "fc.token", publishedAt, cursor.VideoID, expiresAt, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	mock.ExpectCommit()
+
+	if err := repository.SaveTimeCursor(context.Background(), " fc.token ", cursor, expiresAt); err != nil {
+		t.Fatalf("SaveTimeCursor() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations were not met: %v", err)
+	}
+}
+
+// TestFindTimeCursorMapsPersistedCursor 验证未过期游标会恢复为时间线查询位置。
+func TestFindTimeCursorMapsPersistedCursor(t *testing.T) {
+	repository, mock := newMockRepository(t)
+	publishedAt := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
+	now := publishedAt.Add(time.Hour)
+	expiresAt := publishedAt.Add(24 * time.Hour)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "feed_cursor" WHERE scene = $1 AND cursor_token = $2 AND expired_at > $3 ORDER BY "feed_cursor"."id" LIMIT $4`)).
+		WithArgs(domainfeed.TimeCursorScene, "fc.token", now, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "scene", "cursor_token", "published_at", "video_id", "expired_at", "created_at"}).
+			AddRow(1, domainfeed.TimeCursorScene, "fc.token", publishedAt, 7, expiresAt, publishedAt))
+
+	cursor, err := repository.FindTimeCursor(context.Background(), " fc.token ", now)
+	if err != nil {
+		t.Fatalf("FindTimeCursor() error = %v", err)
+	}
+	if cursor.VideoID != 7 || !cursor.PublishedAt.Equal(publishedAt) {
+		t.Fatalf("FindTimeCursor() cursor = %+v, want persisted cursor", cursor)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations were not met: %v", err)
+	}
+}
+
+// TestFindTimeCursorReturnsNotFound 验证未知或已过期的游标会返回未找到错误。
+func TestFindTimeCursorReturnsNotFound(t *testing.T) {
+	repository, mock := newMockRepository(t)
+	now := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "feed_cursor" WHERE scene = $1 AND cursor_token = $2 AND expired_at > $3 ORDER BY "feed_cursor"."id" LIMIT $4`)).
+		WithArgs(domainfeed.TimeCursorScene, "missing", now, 1).
+		WillReturnError(gorm.ErrRecordNotFound)
+
+	if _, err := repository.FindTimeCursor(context.Background(), "missing", now); !errors.Is(err, domainfeed.ErrTimeCursorNotFound) {
+		t.Fatalf("FindTimeCursor() error = %v, want %v", err, domainfeed.ErrTimeCursorNotFound)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("SQL expectations were not met: %v", err)

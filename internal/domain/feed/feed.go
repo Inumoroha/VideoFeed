@@ -14,6 +14,7 @@ const (
 	MaxVisitorIDLength      = 128
 	MaxIdempotencyKeyLength = 128
 	DefaultRefreshScene     = "time"
+	TimeCursorScene         = "time"
 )
 
 // FeedItem 时间线视频项领域对象。

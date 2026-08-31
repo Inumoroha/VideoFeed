@@ -95,6 +95,67 @@ func (r *Repository) ListTimeFeed(ctx context.Context, cursor *domainfeed.TimeCu
 	return items, nil
 }
 
+// SaveTimeCursor 保存时间线分页游标及其有效期。
+func (r *Repository) SaveTimeCursor(ctx context.Context, token string, cursor *domainfeed.TimeCursor, expiresAt time.Time) error {
+	if r == nil || r.db == nil {
+		return errors.New("feed repository is not initialized")
+	}
+	token = strings.TrimSpace(token)
+	if token == "" || expiresAt.IsZero() {
+		return domainfeed.ErrInvalidCursor
+	}
+	if err := cursor.Validate(); err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	model := FeedCursorModel{
+		Scene:       domainfeed.TimeCursorScene,
+		CursorToken: token,
+		PublishedAt: cursor.PublishedAt,
+		VideoID:     cursor.VideoID,
+		ExpiredAt:   expiresAt,
+	}
+	if err := r.db.WithContext(ctx).Create(&model).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+// FindTimeCursor 查询尚未过期的时间线分页游标。
+func (r *Repository) FindTimeCursor(ctx context.Context, token string, now time.Time) (*domainfeed.TimeCursor, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("feed repository is not initialized")
+	}
+	token = strings.TrimSpace(token)
+	if token == "" || now.IsZero() {
+		return nil, domainfeed.ErrInvalidCursor
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var model FeedCursorModel
+	err := r.db.WithContext(ctx).
+		Where("scene = ? AND cursor_token = ? AND expired_at > ?", domainfeed.TimeCursorScene, token, now).
+		First(&model).
+		Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domainfeed.ErrTimeCursorNotFound
+		}
+		return nil, err
+	}
+
+	cursor := &domainfeed.TimeCursor{PublishedAt: model.PublishedAt, VideoID: model.VideoID}
+	if err := cursor.Validate(); err != nil {
+		return nil, err
+	}
+	return cursor, nil
+}
+
 // SaveViewEvent 保存观看事件，并将数据库生成的 ID 和创建时间回写到领域对象。
 func (r *Repository) SaveViewEvent(ctx context.Context, event *domainfeed.ViewEvent) error {
 	if r == nil || r.db == nil {

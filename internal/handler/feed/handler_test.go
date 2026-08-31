@@ -24,6 +24,16 @@ func (r *handlerTestRepository) ListTimeFeed(_ context.Context, _ *domainfeed.Ti
 	return []*domainfeed.FeedItem{}, nil
 }
 
+// SaveTimeCursor 模拟保存分页游标。
+func (r *handlerTestRepository) SaveTimeCursor(_ context.Context, _ string, _ *domainfeed.TimeCursor, _ time.Time) error {
+	return nil
+}
+
+// FindTimeCursor 模拟未找到分页游标。
+func (r *handlerTestRepository) FindTimeCursor(_ context.Context, _ string, _ time.Time) (*domainfeed.TimeCursor, error) {
+	return nil, domainfeed.ErrTimeCursorNotFound
+}
+
 // SaveViewEvent 记录观看事件并模拟数据库生成 ID 和创建时间。
 func (r *handlerTestRepository) SaveViewEvent(_ context.Context, event *domainfeed.ViewEvent) error {
 	event.ID = 1

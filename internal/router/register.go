@@ -41,8 +41,8 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 		return fmt.Errorf("migrate videos: %w", err)
 	}
 
-	if err := gormDB.AutoMigrate(&feedpersistence.FeedViewEventModel{}); err != nil {
-		return fmt.Errorf("migrate view events: %w", err)
+	if err := gormDB.AutoMigrate(&feedpersistence.FeedCursorModel{}, &feedpersistence.FeedViewEventModel{}); err != nil {
+		return fmt.Errorf("migrate feed tables: %w", err)
 	}
 
 	jwtManager, err := authjwt.NewManager(cfg.Auth.JWT)
