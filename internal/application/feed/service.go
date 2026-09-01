@@ -2,50 +2,41 @@ package feed
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"strings"
 	"time"
 
 	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
 )
 
-const (
-	defaultFeedLimit      = 20
-	timeCursorTTL         = 24 * time.Hour
-	timeCursorTokenPrefix = "fc."
-	timeCursorTokenBytes  = 32
-)
+const defaultFeedLimit = 20
 
-// Service 协调信息流查询、分页游标和观看事件处理。
+// Service 编排信息流时间线查询和游标分页。
 type Service struct {
 	repo domainfeed.Repository
-	now  func() time.Time
 }
 
 // NewService 创建使用指定信息流仓储的应用服务。
 func NewService(repo domainfeed.Repository) *Service {
-	return &Service{repo: repo, now: time.Now}
+	return &Service{repo: repo}
 }
 
-// GetTimeFeed 查询时间线视频流，处理游标分页并生成下一页游标。
-func (s *Service) GetTimeFeed(ctx context.Context, cursor string, limit int) (*TimeFeedResult, error) {
+// GetTimelineFeed 查询时间线视频流，处理游标分页并生成下一页游标。
+func (s *Service) GetTimelineFeed(ctx context.Context, cursor string, limit int) (*TimelineFeedResult, error) {
 	if !s.ready() {
 		return nil, ErrFeedServiceNotInitialized
 	}
 	if limit < 0 {
 		return nil, domainfeed.ErrInvalidLimit
 	}
-
-	parsedCursor, err := s.loadTimeCursor(ctx, cursor)
+	parsedCursor, err := parseTimelineCursor(cursor)
 	if err != nil {
 		return nil, err
 	}
 	limit = normalizeLimit(limit)
 
-	items, err := s.repo.ListTimeFeed(ctx, parsedCursor, limit+1)
+	items, err := s.repo.ListTimelineFeed(ctx, parsedCursor, limit+1)
 	if err != nil {
 		return nil, ErrLoadFeedFailed
 	}
@@ -57,119 +48,22 @@ func (s *Service) GetTimeFeed(ctx context.Context, cursor string, limit int) (*T
 
 	nextCursor := ""
 	if hasMore && len(items) > 0 {
-		nextCursor, err = s.createTimeCursor(ctx, &domainfeed.TimeCursor{
+		nextCursor = encodeTimelineCursor(&domainfeed.TimelineCursor{
 			PublishedAt: items[len(items)-1].PublishedAt,
 			VideoID:     items[len(items)-1].VideoID,
 		})
-		if err != nil {
-			return nil, err
-		}
 	}
 
-	return &TimeFeedResult{
+	return &TimelineFeedResult{
 		Items:      items,
 		NextCursor: nextCursor,
 		HasMore:    hasMore,
 	}, nil
 }
 
-// RefreshTimeFeed 从时间线起点查询视频流，适用于刷新首页数据。
-func (s *Service) RefreshTimeFeed(ctx context.Context, limit int) (*TimeFeedResult, error) {
-	return s.GetTimeFeed(ctx, "", limit)
-}
-
-// loadTimeCursor 读取服务端游标；兼容解析旧版 Base64 游标。
-func (s *Service) loadTimeCursor(ctx context.Context, raw string) (*domainfeed.TimeCursor, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, nil
-	}
-	if !strings.HasPrefix(raw, timeCursorTokenPrefix) {
-		return parseTimeCursor(raw)
-	}
-
-	cursor, err := s.repo.FindTimeCursor(ctx, raw, s.currentTime())
-	if err != nil {
-		if errors.Is(err, domainfeed.ErrTimeCursorNotFound) || errors.Is(err, domainfeed.ErrInvalidCursor) {
-			return nil, domainfeed.ErrInvalidCursor
-		}
-		return nil, ErrLoadTimeCursorFailed
-	}
-	if cursor == nil {
-		return nil, domainfeed.ErrInvalidCursor
-	}
-	if err := cursor.Validate(); err != nil {
-		return nil, domainfeed.ErrInvalidCursor
-	}
-	return cursor, nil
-}
-
-// createTimeCursor 生成并保存服务端时间线游标，默认在 24 小时后失效。
-func (s *Service) createTimeCursor(ctx context.Context, cursor *domainfeed.TimeCursor) (string, error) {
-	if err := cursor.Validate(); err != nil {
-		return "", err
-	}
-	token, err := newTimeCursorToken()
-	if err != nil {
-		return "", ErrSaveTimeCursorFailed
-	}
-	if err := s.repo.SaveTimeCursor(ctx, token, cursor, s.currentTime().Add(timeCursorTTL)); err != nil {
-		return "", ErrSaveTimeCursorFailed
-	}
-	return token, nil
-}
-
-// currentTime 返回当前时间，未注入时使用系统时间。
-func (s *Service) currentTime() time.Time {
-	if s.now == nil {
-		return time.Now()
-	}
-	return s.now()
-}
-
-// ReportViewEvent 创建观看事件或返回幂等键对应的已有事件。
-func (s *Service) ReportViewEvent(ctx context.Context, userID *int64, visitorID string, videoID int64, eventType string, watchMS int, idempotencyKey string) (*ViewEventResult, error) {
-	if !s.ready() {
-		return nil, ErrFeedServiceNotInitialized
-	}
-	idempotencyKey = strings.TrimSpace(idempotencyKey)
-	if len(idempotencyKey) > domainfeed.MaxIdempotencyKeyLength {
-		return nil, domainfeed.ErrIdempotencyKeyTooLong
-	}
-
-	if idempotencyKey != "" {
-		existing, err := s.repo.FindViewEventByIdempotencyKey(ctx, idempotencyKey)
-		if err == nil {
-			if existing == nil {
-				return nil, ErrLoadViewEventFailed
-			}
-			return &ViewEventResult{Event: existing, Created: false}, nil
-		}
-		if !errors.Is(err, domainfeed.ErrViewEventNotFound) {
-			return nil, ErrLoadViewEventFailed
-		}
-	}
-
-	event, err := domainfeed.NewViewEvent(userID, visitorID, videoID, eventType, watchMS, idempotencyKey)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := s.repo.SaveViewEvent(ctx, event); err != nil {
-		if idempotencyKey != "" && errors.Is(err, domainfeed.ErrDuplicateIdempotencyKey) {
-			existing, loadErr := s.repo.FindViewEventByIdempotencyKey(ctx, idempotencyKey)
-			if loadErr == nil {
-				if existing == nil {
-					return nil, ErrLoadViewEventFailed
-				}
-				return &ViewEventResult{Event: existing, Created: false}, nil
-			}
-			return nil, ErrLoadViewEventFailed
-		}
-		return nil, ErrSaveViewEventFailed
-	}
-
-	return &ViewEventResult{Event: event, Created: true}, nil
+// RefreshTimelineFeed 从时间线起点查询视频流，适用于刷新首页数据。
+func (s *Service) RefreshTimelineFeed(ctx context.Context, limit int) (*TimelineFeedResult, error) {
+	return s.GetTimelineFeed(ctx, "", limit)
 }
 
 // ready 判断服务及其信息流仓储依赖是否已初始化。
@@ -179,7 +73,7 @@ func (s *Service) ready() bool {
 
 // normalizeLimit 将零值分页数量转换为默认值，并限制最大返回数量。
 func normalizeLimit(limit int) int {
-	if limit <= 0 {
+	if limit == 0 {
 		return defaultFeedLimit
 	}
 	if limit > domainfeed.MaxLimit {
@@ -188,8 +82,8 @@ func normalizeLimit(limit int) int {
 	return limit
 }
 
-// parseTimeCursor 解码并校验旧版 Base64 时间线分页游标。
-func parseTimeCursor(raw string) (*domainfeed.TimeCursor, error) {
+// parseTimelineCursor 解码并校验时间线分页游标。
+func parseTimelineCursor(raw string) (*domainfeed.TimelineCursor, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
@@ -203,45 +97,29 @@ func parseTimeCursor(raw string) (*domainfeed.TimeCursor, error) {
 		}
 	}
 
-	var payload timeCursorPayload
+	var payload timelineCursorPayload
 	if err := json.Unmarshal(content, &payload); err != nil {
 		return nil, domainfeed.ErrInvalidCursor
 	}
 
 	publishedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(payload.PublishedAt))
-	if err != nil {
+	if err != nil || payload.VideoID <= 0 {
 		return nil, domainfeed.ErrInvalidCursor
 	}
 
-	cursor := &domainfeed.TimeCursor{
+	return &domainfeed.TimelineCursor{
 		PublishedAt: publishedAt,
 		VideoID:     payload.VideoID,
-	}
-	if err := cursor.Validate(); err != nil {
-		return nil, err
-	}
-	return cursor, nil
+	}, nil
 }
 
-// newTimeCursorToken 生成 URL 安全的随机服务端游标标识。
-func newTimeCursorToken() (string, error) {
-	content := make([]byte, timeCursorTokenBytes)
-	if _, err := rand.Read(content); err != nil {
-		return "", err
-	}
-	return timeCursorTokenPrefix + base64.RawURLEncoding.EncodeToString(content), nil
-}
-
-// encodeTimeCursor 将旧版时间线分页游标编码为 URL 安全字符串。
-func encodeTimeCursor(cursor *domainfeed.TimeCursor) string {
-	if cursor == nil {
-		return ""
-	}
-	if err := cursor.Validate(); err != nil {
+// encodeTimelineCursor 将时间线分页游标编码为 URL 安全字符串。
+func encodeTimelineCursor(cursor *domainfeed.TimelineCursor) string {
+	if cursor == nil || cursor.VideoID <= 0 || cursor.PublishedAt.IsZero() {
 		return ""
 	}
 
-	content, err := json.Marshal(timeCursorPayload{
+	content, err := json.Marshal(timelineCursorPayload{
 		PublishedAt: cursor.PublishedAt.UTC().Format(time.RFC3339Nano),
 		VideoID:     cursor.VideoID,
 	})
