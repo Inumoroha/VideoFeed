@@ -2,6 +2,7 @@ package router
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 	applicationfeed "github.com/inumoroha/video-feed/internal/application/feed"
@@ -11,6 +12,7 @@ import (
 	"github.com/inumoroha/video-feed/internal/config"
 	"github.com/inumoroha/video-feed/internal/handler"
 	feedhandler "github.com/inumoroha/video-feed/internal/handler/feed"
+	uploadhandler "github.com/inumoroha/video-feed/internal/handler/upload"
 	userhandler "github.com/inumoroha/video-feed/internal/handler/user"
 	videohandler "github.com/inumoroha/video-feed/internal/handler/video"
 
@@ -55,16 +57,21 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	feedRepository := feedpersistence.New(gormDB)
 	feedService := applicationfeed.NewService(feedRepository)
 	feedHandler := feedhandler.NewHandler(feedService)
-
+	uploadRoot, err := filepath.Abs("./uploads")
+	if err != nil {
+		return fmt.Errorf("resolve upload directory: %w", err)
+	}
+	uploadHandler := uploadhandler.NewHandler(uploadRoot)
 	g.GET("/health", handler.Health)
+	g.Static("/uploads", uploadRoot)
 
-	registerRoutes(g, userHandler, videoHandler, feedHandler, jwtManager)
+	registerRoutes(g, userHandler, videoHandler, feedHandler, uploadHandler, jwtManager)
 
 	return nil
 }
 
 // registerRoutes 注册认证、用户、视频和信息流接口。
-func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandler *videohandler.Handler, feedHandler *feedhandler.Handler, jwtManager *authjwt.Manager) {
+func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandler *videohandler.Handler, feedHandler *feedhandler.Handler, uploadHandler *uploadhandler.Handler, jwtManager *authjwt.Manager) {
 	authMiddleware := middleware.NewJWTAuthMiddleware(jwtManager)
 	api := g.Group("/api")
 
@@ -87,4 +94,7 @@ func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandle
 	feed := api.Group("/feed")
 	feed.GET("/timeline", feedHandler.Timeline)
 	feed.GET("/refresh", feedHandler.Refresh)
+
+	uploads := api.Group("/uploads", authMiddleware)
+	uploads.POST("", uploadHandler.Create)
 }

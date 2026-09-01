@@ -10,6 +10,7 @@ import (
 	authjwt "github.com/inumoroha/video-feed/internal/auth/jwt"
 	"github.com/inumoroha/video-feed/internal/config"
 	feedhandler "github.com/inumoroha/video-feed/internal/handler/feed"
+	uploadhandler "github.com/inumoroha/video-feed/internal/handler/upload"
 	userhandler "github.com/inumoroha/video-feed/internal/handler/user"
 	videohandler "github.com/inumoroha/video-feed/internal/handler/video"
 )
@@ -49,7 +50,7 @@ func TestRegisterRoutesRegistersExpectedPaths(t *testing.T) {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 
-	registerRoutes(engine, userhandler.NewHandler(nil), videohandler.NewHandler(nil), feedhandler.NewHandler(nil), manager)
+	registerRoutes(engine, userhandler.NewHandler(nil), videohandler.NewHandler(nil), feedhandler.NewHandler(nil), uploadhandler.NewHandler(t.TempDir()), manager)
 	routes := make(map[string]bool)
 	for _, route := range engine.Routes() {
 		routes[route.Method+" "+route.Path] = true
@@ -68,6 +69,7 @@ func TestRegisterRoutesRegistersExpectedPaths(t *testing.T) {
 		http.MethodGet + " /api/users/:userId/videos",
 		http.MethodGet + " /api/feed/timeline",
 		http.MethodGet + " /api/feed/refresh",
+		http.MethodPost + " /api/uploads",
 	} {
 		if !routes[route] {
 			t.Errorf("missing route %q", route)
@@ -93,7 +95,7 @@ func TestRegisterRoutesProtectsUserEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
-	registerRoutes(engine, userhandler.NewHandler(nil), videohandler.NewHandler(nil), feedhandler.NewHandler(nil), manager)
+	registerRoutes(engine, userhandler.NewHandler(nil), videohandler.NewHandler(nil), feedhandler.NewHandler(nil), uploadhandler.NewHandler(t.TempDir()), manager)
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/users/me", nil)
@@ -101,5 +103,28 @@ func TestRegisterRoutesProtectsUserEndpoints(t *testing.T) {
 
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("GET /api/users/me status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+}
+
+// TestRegisterRoutesProtectsUploadEndpoint 验证文件上传接口缺少认证信息时返回 401。
+func TestRegisterRoutesProtectsUploadEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	manager, err := authjwt.NewManager(config.JWTConfig{
+		Secret:     "01234567890123456789012345678901",
+		AccessTTL:  time.Hour,
+		RefreshTTL: 2 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	registerRoutes(engine, userhandler.NewHandler(nil), videohandler.NewHandler(nil), feedhandler.NewHandler(nil), uploadhandler.NewHandler(t.TempDir()), manager)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/uploads", nil)
+	engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("POST /api/uploads status = %d, want %d", recorder.Code, http.StatusUnauthorized)
 	}
 }

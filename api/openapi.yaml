@@ -364,6 +364,35 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/uploads:
+    post:
+      tags:
+        - Upload
+      summary: Upload a file
+      operationId: uploadFile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/UploadRequest'
+      responses:
+        '201':
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 components:
   parameters:
     VideoLimit:
@@ -688,6 +717,44 @@ components:
         published_at:
           type: string
           format: date-time
+    UploadRequest:
+      type: object
+      required:
+        - file
+      properties:
+        file:
+          type: string
+          format: binary
+        kind:
+          type: string
+          enum:
+            - video
+            - cover
+            - avatar
+            - file
+          default: file
+    UploadResponse:
+      type: object
+      required:
+        - url
+        - kind
+        - filename
+        - size
+      properties:
+        url:
+          type: string
+        kind:
+          type: string
+          enum:
+            - video
+            - cover
+            - avatar
+            - file
+        filename:
+          type: string
+        size:
+          type: integer
+          format: int64
     MessageResponse:
       type: object
       required:
@@ -711,6 +778,14 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
           example:
             error: invalid request
+    PayloadTooLarge:
+      description: Uploaded file exceeds the size limit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: upload too large
     InternalServerError:
       description: Internal server error
       content:
