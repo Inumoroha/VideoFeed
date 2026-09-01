@@ -15,6 +15,7 @@ var environmentBindings = []struct {
 	key string
 	env string
 }{
+	{key: "server.port", env: "SERVER_PORT"},
 	{key: "database.url", env: "DATABASE_URL"},
 	{key: "auth.jwt.secret", env: "JWT_SECRET"},
 }
