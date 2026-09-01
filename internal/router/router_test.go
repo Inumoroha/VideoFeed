@@ -66,9 +66,8 @@ func TestRegisterRoutesRegistersExpectedPaths(t *testing.T) {
 		http.MethodGet + " /api/videos/:videoId",
 		http.MethodDelete + " /api/videos/:videoId",
 		http.MethodGet + " /api/users/:userId/videos",
-		http.MethodGet + " /api/feed/time",
+		http.MethodGet + " /api/feed/timeline",
 		http.MethodGet + " /api/feed/refresh",
-		http.MethodPost + " /api/feed/view-events",
 	} {
 		if !routes[route] {
 			t.Errorf("missing route %q", route)
@@ -76,6 +75,9 @@ func TestRegisterRoutesRegistersExpectedPaths(t *testing.T) {
 	}
 	if routes[http.MethodPost+" /api/auth/login"] {
 		t.Error("unexpected legacy login route /api/auth/login")
+	}
+	if routes[http.MethodPost+" /api/feed/view-events"] {
+		t.Error("unexpected removed feed view-events route")
 	}
 }
 

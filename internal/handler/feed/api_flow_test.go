@@ -78,7 +78,7 @@ func (r *memoryFeedRepo) ListTimelineFeed(_ context.Context, cursor *domainfeed.
 func TestFeedAPIFlow(t *testing.T) {
 	router := newFeedRouter(seedFeedItems())
 
-	firstPageResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/time?limit=2", "")
+	firstPageResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/timeline?limit=2", "")
 	requireStatus(t, firstPageResponse, http.StatusOK)
 
 	var firstPage feedAPIResponse
@@ -90,7 +90,7 @@ func TestFeedAPIFlow(t *testing.T) {
 		t.Fatalf("unexpected first page cursor: %+v", firstPage)
 	}
 
-	secondPageResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/time?cursor="+firstPage.NextCursor+"&limit=2", "")
+	secondPageResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/timeline?cursor="+firstPage.NextCursor+"&limit=2", "")
 	requireStatus(t, secondPageResponse, http.StatusOK)
 
 	var secondPage feedAPIResponse
@@ -113,10 +113,10 @@ func TestFeedAPIFlow(t *testing.T) {
 func TestFeedAPIValidation(t *testing.T) {
 	router := newFeedRouter(seedFeedItems())
 
-	badLimitResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/time?limit=0", "")
+	badLimitResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/timeline?limit=0", "")
 	requireStatus(t, badLimitResponse, http.StatusBadRequest)
 
-	badCursorResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/time?cursor=bad-cursor", "")
+	badCursorResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/timeline?cursor=bad-cursor", "")
 	requireStatus(t, badCursorResponse, http.StatusBadRequest)
 }
 
@@ -130,7 +130,7 @@ func newFeedRouter(items []*domainfeed.FeedItem) *gin.Engine {
 
 	api := router.Group("/api")
 	feed := api.Group("/feed")
-	feed.GET("/time", handler.Timeline)
+	feed.GET("/timeline", handler.Timeline)
 	feed.GET("/refresh", handler.Refresh)
 
 	return router

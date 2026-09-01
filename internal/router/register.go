@@ -41,10 +41,6 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 		return fmt.Errorf("migrate videos: %w", err)
 	}
 
-	if err := gormDB.AutoMigrate(&feedpersistence.FeedCursorModel{}, &feedpersistence.FeedViewEventModel{}); err != nil {
-		return fmt.Errorf("migrate feed tables: %w", err)
-	}
-
 	jwtManager, err := authjwt.NewManager(cfg.Auth.JWT)
 	if err != nil {
 		return fmt.Errorf("create JWT manager: %w", err)
@@ -89,7 +85,6 @@ func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandle
 	api.GET("/users/:userId/videos", videoHandler.ListByAuthor)
 
 	feed := api.Group("/feed")
-	feed.GET("/time", feedHandler.Time)
+	feed.GET("/timeline", feedHandler.Timeline)
 	feed.GET("/refresh", feedHandler.Refresh)
-	feed.POST("/view-events", middleware.NewOptionalJWTAuthMiddleware(jwtManager), feedHandler.ReportViewEvent)
 }

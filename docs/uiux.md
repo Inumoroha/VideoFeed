@@ -1,7 +1,7 @@
 # GCFeed - UI/UX 规格（完整功能版）
 
 > 版本：1.0
-> 日期：2026-05-03
+> 日期：2026-08-31
 > 产品定位：电脑 Web 端短视频 Feed + 完整运营后台
 > 关联文档：`README.md`、`docs/product.md`、`docs/architecture.md`、`docs/modules/*.md`
 

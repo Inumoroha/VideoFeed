@@ -323,12 +323,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/feed/time:
+  /api/feed/timeline:
     get:
       tags:
         - Feed
       summary: Get the chronological video feed
-      operationId: getTimeFeed
+      operationId: getTimelineFeed
       security: []
       parameters:
         - $ref: '#/components/parameters/FeedLimit'
@@ -349,7 +349,7 @@ paths:
       tags:
         - Feed
       summary: Refresh the chronological video feed
-      operationId: refreshTimeFeed
+      operationId: refreshTimelineFeed
       security: []
       parameters:
         - $ref: '#/components/parameters/FeedLimit'
@@ -362,53 +362,6 @@ paths:
                 $ref: '#/components/schemas/FeedResponse'
         '400':
           $ref: '#/components/responses/InvalidRequest'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-  /api/feed/view-events:
-    post:
-      tags:
-        - Feed
-      summary: Report a video viewing event
-      operationId: reportFeedViewEvent
-      security:
-        - bearerAuth: []
-        - {}
-      parameters:
-        - name: Idempotency-Key
-          in: header
-          required: false
-          schema:
-            type: string
-            maxLength: 128
-          description: Optional key used to safely retry the same event.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ViewEventRequest'
-            example:
-              visitor_id: visitor-001
-              video_id: 3
-              event_type: VIEW
-              watch_ms: 3000
-      responses:
-        '201':
-          description: Viewing event created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ViewEventResponse'
-        '200':
-          description: Existing event returned for an idempotent retry
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ViewEventResponse'
-        '400':
-          $ref: '#/components/responses/InvalidRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
 components:
@@ -446,7 +399,7 @@ components:
       required: false
       schema:
         type: string
-      description: Opaque server-side cursor returned by the previous feed page. It expires 24 hours after creation; expired or unknown cursors return 400.
+      description: URL-safe Base64 cursor returned by the previous feed page. It contains the last item's publication time and video ID; invalid cursors return 400.
 
   securitySchemes:
     bearerAuth:
@@ -685,7 +638,7 @@ components:
             $ref: '#/components/schemas/FeedItemResponse'
         next_cursor:
           type: string
-          description: Opaque server-side cursor for the next page; it expires after 24 hours and is empty when there is no next page.
+          description: URL-safe Base64 cursor for the next page; it is empty when there is no next page.
         has_more:
           type: boolean
       example:
@@ -697,6 +650,8 @@ components:
       required:
         - video_id
         - author_id
+        - author_nickname
+        - author_avatar_url
         - title
         - description
         - media_url
@@ -712,6 +667,10 @@ components:
         author_id:
           type: integer
           format: int64
+        author_nickname:
+          type: string
+        author_avatar_url:
+          type: string
         title:
           type: string
         description:
@@ -727,56 +686,6 @@ components:
         favorite_count:
           type: integer
         published_at:
-          type: string
-          format: date-time
-    ViewEventRequest:
-      type: object
-      required:
-        - video_id
-        - event_type
-      properties:
-        visitor_id:
-          type: string
-          maxLength: 128
-          description: Required when the request is not associated with a JWT user.
-        video_id:
-          type: integer
-          format: int64
-          minimum: 1
-        event_type:
-          type: string
-          description: Event type; accepted values are IMPRESSION, VIEW, or COMPLETE, case-insensitive.
-        watch_ms:
-          type: integer
-          minimum: 0
-          default: 0
-    ViewEventResponse:
-      type: object
-      required:
-        - id
-        - video_id
-        - event_type
-        - watch_ms
-        - created_at
-      properties:
-        id:
-          type: integer
-          format: int64
-        visitor_id:
-          type: string
-        video_id:
-          type: integer
-          format: int64
-        event_type:
-          type: string
-          enum:
-            - IMPRESSION
-            - VIEW
-            - COMPLETE
-        watch_ms:
-          type: integer
-          minimum: 0
-        created_at:
           type: string
           format: date-time
     MessageResponse:
