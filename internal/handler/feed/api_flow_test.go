@@ -28,6 +28,7 @@ type feedItemAPIResponse struct {
 	VideoID       int64     `json:"video_id"`
 	AuthorID      int64     `json:"author_id"`
 	Title         string    `json:"title"`
+	Description   string    `json:"description"`
 	MediaURL      string    `json:"media_url"`
 	CoverURL      string    `json:"cover_url"`
 	LikeCount     int       `json:"like_count"`
@@ -163,7 +164,7 @@ func TestFeedAPIFlow(t *testing.T) {
 
 	var firstPage feedAPIResponse
 	decodeJSON(t, firstPageResponse, &firstPage)
-	if len(firstPage.Items) != 2 || firstPage.Items[0].VideoID != 3 || firstPage.Items[1].VideoID != 2 {
+	if len(firstPage.Items) != 2 || firstPage.Items[0].VideoID != 3 || firstPage.Items[0].Description != "new description" || firstPage.Items[1].VideoID != 2 {
 		t.Fatalf("unexpected first page response: %+v", firstPage)
 	}
 	if firstPage.NextCursor == "" || !firstPage.HasMore {
@@ -264,9 +265,9 @@ func performFeedJSONRequest(router *gin.Engine, method, path, body, idempotencyK
 func seedFeedItems() []*domainfeed.FeedItem {
 	base := time.Date(2026, time.May, 3, 12, 0, 0, 0, time.UTC)
 	return []*domainfeed.FeedItem{
-		domainfeed.RestoreFeedItem(1, 10, "old video", "https://example.com/1.mp4", "https://example.com/1.jpg", 1, 2, 3, base.Add(-2*time.Hour)),
-		domainfeed.RestoreFeedItem(2, 20, "middle video", "https://example.com/2.mp4", "https://example.com/2.jpg", 4, 5, 6, base.Add(-1*time.Hour)),
-		domainfeed.RestoreFeedItem(3, 30, "new video", "https://example.com/3.mp4", "https://example.com/3.jpg", 7, 8, 9, base),
+		domainfeed.RestoreFeedItem(1, 10, "old video", "old description", "https://example.com/1.mp4", "https://example.com/1.jpg", 1, 2, 3, base.Add(-2*time.Hour)),
+		domainfeed.RestoreFeedItem(2, 20, "middle video", "middle description", "https://example.com/2.mp4", "https://example.com/2.jpg", 4, 5, 6, base.Add(-1*time.Hour)),
+		domainfeed.RestoreFeedItem(3, 30, "new video", "new description", "https://example.com/3.mp4", "https://example.com/3.jpg", 7, 8, 9, base),
 	}
 }
 

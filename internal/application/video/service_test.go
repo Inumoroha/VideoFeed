@@ -78,7 +78,7 @@ func TestCreatePublishedValidatesBeforeIdempotencyLookup(t *testing.T) {
 	repository := &serviceTestRepository{}
 	service := NewService(repository)
 
-	_, err := service.CreatePublished(context.Background(), 0, "title", "media", "cover", "key")
+	_, err := service.CreatePublished(context.Background(), 0, "title", "description", "media", "cover", "key")
 	if !errors.Is(err, domainvideo.ErrInvalidAuthorID) {
 		t.Fatalf("CreatePublished() error = %v, want %v", err, domainvideo.ErrInvalidAuthorID)
 	}
@@ -92,17 +92,20 @@ func TestCreatePublishedCreatesAndReusesVideo(t *testing.T) {
 	repository := &serviceTestRepository{}
 	service := NewService(repository)
 
-	created, err := service.CreatePublished(context.Background(), 1, "title", "media", "cover", "")
+	created, err := service.CreatePublished(context.Background(), 1, "title", "description", "media", "cover", "")
 	if err != nil {
 		t.Fatalf("CreatePublished() error = %v", err)
 	}
 	if created == nil || !created.Created || created.Video == nil || repository.savedVideo == nil {
 		t.Fatalf("CreatePublished() result = %+v, want created video", created)
 	}
+	if repository.savedVideo.Description != "description" {
+		t.Fatalf("CreatePublished() saved description = %q, want description", repository.savedVideo.Description)
+	}
 
 	existing := &domainvideo.Video{ID: 9, AuthorID: 1, Status: domainvideo.StatusPublished}
 	repository.findByKeyVideo = existing
-	result, err := service.CreatePublished(context.Background(), 1, "title", "media", "cover", "key")
+	result, err := service.CreatePublished(context.Background(), 1, "title", "description", "media", "cover", "key")
 	if err != nil {
 		t.Fatalf("CreatePublished() existing error = %v", err)
 	}
@@ -129,7 +132,7 @@ func TestServiceRejectsNilRepositoryResults(t *testing.T) {
 	if _, err := service.Get(context.Background(), 1); !errors.Is(err, ErrLoadVideoFailed) {
 		t.Fatalf("Get() error = %v, want %v", err, ErrLoadVideoFailed)
 	}
-	if _, err := service.CreatePublished(context.Background(), 1, "title", "media", "cover", "key"); !errors.Is(err, ErrLoadVideoFailed) {
+	if _, err := service.CreatePublished(context.Background(), 1, "title", "description", "media", "cover", "key"); !errors.Is(err, ErrLoadVideoFailed) {
 		t.Fatalf("CreatePublished() error = %v, want %v", err, ErrLoadVideoFailed)
 	}
 	if err := service.Delete(context.Background(), 1, 1); !errors.Is(err, ErrLoadVideoFailed) {

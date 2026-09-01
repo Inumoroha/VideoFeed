@@ -23,6 +23,7 @@ type FeedItem struct {
 	VideoID       int64
 	AuthorID      int64
 	Title         string
+	Description   string
 	MediaURL      string
 	CoverURL      string
 	LikeCount     int
@@ -111,11 +112,12 @@ func RestoreViewEvent(id int64, userID *int64, visitorID string, videoID int64, 
 }
 
 // RestoreFeedItem 根据持久化数据恢复信息流条目领域对象。
-func RestoreFeedItem(videoID int64, authorID int64, title string, mediaURL string, coverURL string, likeCount int, commentCount int, favoriteCount int, publishedAt time.Time) *FeedItem {
+func RestoreFeedItem(videoID int64, authorID int64, title string, description string, mediaURL string, coverURL string, likeCount int, commentCount int, favoriteCount int, publishedAt time.Time) *FeedItem {
 	return &FeedItem{
 		VideoID:       videoID,
 		AuthorID:      authorID,
 		Title:         strings.TrimSpace(title),
+		Description:   strings.TrimSpace(description),
 		MediaURL:      strings.TrimSpace(mediaURL),
 		CoverURL:      strings.TrimSpace(coverURL),
 		LikeCount:     likeCount,

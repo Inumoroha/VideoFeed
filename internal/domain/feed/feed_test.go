@@ -146,8 +146,8 @@ func TestRestoreViewEventNormalizesValues(t *testing.T) {
 
 // TestRestoreFeedItemNormalizesValues 验证恢复信息流条目时会去除字符串首尾空白。
 func TestRestoreFeedItemNormalizesValues(t *testing.T) {
-	item := RestoreFeedItem(7, 42, " title ", " media ", " cover ", 1, 2, 3, time.Time{})
-	if item.Title != "title" || item.MediaURL != "media" || item.CoverURL != "cover" {
+	item := RestoreFeedItem(7, 42, " title ", " description ", " media ", " cover ", 1, 2, 3, time.Time{})
+	if item.Title != "title" || item.Description != "description" || item.MediaURL != "media" || item.CoverURL != "cover" {
 		t.Fatalf("RestoreFeedItem() = %+v, want normalized values", item)
 	}
 }

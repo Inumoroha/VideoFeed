@@ -133,6 +133,7 @@ func timeFeedResponseFromResult(result *applicationfeed.TimeFeedResult) timeFeed
 			VideoID:       item.VideoID,
 			AuthorID:      item.AuthorID,
 			Title:         item.Title,
+			Description:   item.Description,
 			MediaURL:      item.MediaURL,
 			CoverURL:      item.CoverURL,
 			LikeCount:     item.LikeCount,

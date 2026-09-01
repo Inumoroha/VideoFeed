@@ -20,12 +20,12 @@ func NewService(repo domainvideo.Repository) *Service {
 }
 
 // CreatePublished 校验发布参数，按幂等键复用已有视频或创建新视频。
-func (s *Service) CreatePublished(ctx context.Context, authorID int64, title, mediaURL, coverURL, idempotencyKey string) (*CreateResult, error) {
+func (s *Service) CreatePublished(ctx context.Context, authorID int64, title, description string, mediaURL, coverURL, idempotencyKey string) (*CreateResult, error) {
 	if !s.ready() {
 		return nil, ErrVideoServiceNotInitialized
 	}
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
-	video, err := domainvideo.NewPublished(authorID, title, mediaURL, coverURL, idempotencyKey)
+	video, err := domainvideo.NewPublished(authorID, title, description, mediaURL, coverURL, idempotencyKey)
 	if err != nil {
 		return nil, err
 	}

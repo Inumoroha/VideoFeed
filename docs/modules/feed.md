@@ -25,6 +25,7 @@
       "video_id": 1001,
       "author_id": 12,
       "title": "first video",
+      "description": "first video description",
       "media_url": "https://example.com/video.mp4",
       "cover_url": "https://example.com/cover.jpg",
       "like_count": 0,

@@ -57,6 +57,7 @@ func TestSaveMapsDuplicateIdempotencyKey(t *testing.T) {
 	video := &domainvideo.Video{
 		AuthorID:       1,
 		Title:          "title",
+		Description:    "description",
 		MediaURL:       "media-url",
 		CoverURL:       "cover-url",
 		Status:         domainvideo.StatusPublished,
@@ -64,8 +65,8 @@ func TestSaveMapsDuplicateIdempotencyKey(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO "videos" ("author_id","title","media_url","cover_url","status","like_count","comment_count","favorite_count","published_at","idempotency_key","created_at","updated_at") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING "id"`)).
-		WithArgs(video.AuthorID, video.Title, video.MediaURL, video.CoverURL, video.Status, video.LikeCount, video.CommentCount, video.FavoriteCount, nil, "key", sqlmock.AnyArg(), sqlmock.AnyArg()).
+	mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO "videos" ("author_id","title","description","media_url","cover_url","status","like_count","comment_count","favorite_count","published_at","idempotency_key","created_at","updated_at") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING "id"`)).
+		WithArgs(video.AuthorID, video.Title, video.Description, video.MediaURL, video.CoverURL, video.Status, video.LikeCount, video.CommentCount, video.FavoriteCount, nil, "key", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(gorm.ErrDuplicatedKey)
 	mock.ExpectRollback()
 
@@ -101,6 +102,18 @@ func TestVideoModelAvoidsMySQLSpecificStatusType(t *testing.T) {
 	}
 	if strings.Contains(field.Tag.Get("gorm"), "tinyint") {
 		t.Fatalf("Status GORM tag = %q, must not contain tinyint", field.Tag.Get("gorm"))
+	}
+}
+
+// TestVideoModelUsesCompatibleDescriptionConstraint 验证描述列长度与领域校验一致且可平滑迁移旧数据。
+func TestVideoModelUsesCompatibleDescriptionConstraint(t *testing.T) {
+	field, ok := reflect.TypeOf(VideoModel{}).FieldByName("Description")
+	if !ok {
+		t.Fatal("VideoModel is missing Description field")
+	}
+	tag := field.Tag.Get("gorm")
+	if !strings.Contains(tag, "size:512") || !strings.Contains(tag, "not null") || !strings.Contains(tag, "default:''") {
+		t.Fatalf("Description GORM tag = %q, want 512-character non-null field with empty default", tag)
 	}
 }
 

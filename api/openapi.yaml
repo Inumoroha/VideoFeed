@@ -567,6 +567,9 @@ components:
           minLength: 1
           maxLength: 128
           pattern: '.*\S.*'
+        description:
+          type: string
+          maxLength: 512
         media_url:
           type: string
           minLength: 1
@@ -581,6 +584,7 @@ components:
         - id
         - author_id
         - title
+        - description
         - media_url
         - cover_url
         - status
@@ -601,6 +605,10 @@ components:
         title:
           type: string
           example: Demo video
+        description:
+          type: string
+          maxLength: 512
+          example: A short introduction to the video.
         media_url:
           type: string
           example: https://example.com/video.mp4
@@ -633,6 +641,7 @@ components:
         id: 1
         author_id: 7
         title: Demo video
+        description: A short introduction to the video.
         media_url: https://example.com/video.mp4
         cover_url: https://example.com/cover.jpg
         status: 2
@@ -689,6 +698,7 @@ components:
         - video_id
         - author_id
         - title
+        - description
         - media_url
         - cover_url
         - like_count
@@ -703,6 +713,8 @@ components:
           type: integer
           format: int64
         title:
+          type: string
+        description:
           type: string
         media_url:
           type: string

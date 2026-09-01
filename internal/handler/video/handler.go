@@ -46,6 +46,7 @@ func (h *Handler) Create(c *gin.Context) {
 		c.Request.Context(),
 		userID,
 		req.Title,
+		req.Description,
 		req.MediaURL,
 		req.CoverURL,
 		c.GetHeader("Idempotency-Key"),
@@ -228,6 +229,7 @@ func videoResponseFromDomain(video *domainvideo.Video) videoResponse {
 		ID:            video.ID,
 		AuthorID:      video.AuthorID,
 		Title:         video.Title,
+		Description:   video.Description,
 		MediaURL:      video.MediaURL,
 		CoverURL:      video.CoverURL,
 		Status:        video.Status,
@@ -283,5 +285,6 @@ func isBadRequestError(err error) bool {
 		errors.Is(err, domainvideo.ErrEmptyCoverURL) ||
 		errors.Is(err, domainvideo.ErrIdempotencyKeyTooLong) ||
 		errors.Is(err, domainvideo.ErrInvalidLimit) ||
-		errors.Is(err, domainvideo.ErrInvalidOffset)
+		errors.Is(err, domainvideo.ErrInvalidOffset) ||
+		errors.Is(err, domainvideo.ErrDescriptionTooLong)
 }

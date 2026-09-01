@@ -18,10 +18,12 @@ type Repository struct {
 
 var _ domainfeed.Repository = (*Repository)(nil)
 
+// timeFeedVideoModel 表示时间线查询所需的视频字段。
 type timeFeedVideoModel struct {
 	VideoID       int64     `gorm:"column:video_id"`
 	AuthorID      int64     `gorm:"column:author_id"`
 	Title         string    `gorm:"column:title"`
+	Description   string    `gorm:"column:description"`
 	MediaURL      string    `gorm:"column:media_url"`
 	CoverURL      string    `gorm:"column:cover_url"`
 	LikeCount     int       `gorm:"column:like_count"`
@@ -56,7 +58,7 @@ func (r *Repository) ListTimeFeed(ctx context.Context, cursor *domainfeed.TimeCu
 	var models []timeFeedVideoModel
 	query := r.db.WithContext(ctx).
 		Table("videos").
-		Select("id AS video_id, author_id, title, media_url, cover_url, like_count, comment_count, favorite_count, published_at").
+		Select("id AS video_id, author_id, title, description, media_url, cover_url, like_count, comment_count, favorite_count, published_at").
 		Where("status = ? AND published_at IS NOT NULL", domainvideo.StatusPublished)
 
 	if cursor != nil {
@@ -84,6 +86,7 @@ func (r *Repository) ListTimeFeed(ctx context.Context, cursor *domainfeed.TimeCu
 			model.VideoID,
 			model.AuthorID,
 			model.Title,
+			model.Description,
 			model.MediaURL,
 			model.CoverURL,
 			model.LikeCount,

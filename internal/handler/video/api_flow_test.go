@@ -22,10 +22,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// videoAPIResponse 表示视频 API 流程测试中解析的视频响应。
 type videoAPIResponse struct {
 	ID            int64      `json:"id"`
 	AuthorID      int64      `json:"author_id"`
 	Title         string     `json:"title"`
+	Description   string     `json:"description"`
 	MediaURL      string     `json:"media_url"`
 	CoverURL      string     `json:"cover_url"`
 	Status        int        `json:"status"`
@@ -37,6 +39,7 @@ type videoAPIResponse struct {
 	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
+// videoListAPIResponse 表示视频列表 API 流程测试中解析的分页响应。
 type videoListAPIResponse struct {
 	Items  []videoAPIResponse `json:"items"`
 	Limit  int                `json:"limit"`
@@ -174,7 +177,7 @@ func TestVideoAPIFlow(t *testing.T) {
 		router,
 		http.MethodPost,
 		"/api/videos",
-		`{"title":"first video","media_url":"https://example.com/video.mp4","cover_url":"https://example.com/cover.jpg"}`,
+		`{"title":"first video","description":"first description","media_url":"https://example.com/video.mp4","cover_url":"https://example.com/cover.jpg"}`,
 		token,
 		"create-video-1",
 	)
@@ -185,7 +188,7 @@ func TestVideoAPIFlow(t *testing.T) {
 	if created.ID == 0 || created.AuthorID != 42 || created.Status != domainvideo.StatusPublished {
 		t.Fatalf("unexpected create response: %+v", created)
 	}
-	if created.Title != "first video" || created.MediaURL == "" || created.CoverURL == "" || created.PublishedAt == nil {
+	if created.Title != "first video" || created.Description != "first description" || created.MediaURL == "" || created.CoverURL == "" || created.PublishedAt == nil {
 		t.Fatalf("unexpected create response: %+v", created)
 	}
 
@@ -193,7 +196,7 @@ func TestVideoAPIFlow(t *testing.T) {
 		router,
 		http.MethodPost,
 		"/api/videos",
-		`{"title":"changed title","media_url":"https://example.com/changed.mp4","cover_url":"https://example.com/changed.jpg"}`,
+		`{"title":"changed title","description":"changed description","media_url":"https://example.com/changed.mp4","cover_url":"https://example.com/changed.jpg"}`,
 		token,
 		"create-video-1",
 	)
@@ -201,19 +204,24 @@ func TestVideoAPIFlow(t *testing.T) {
 
 	var replayed videoAPIResponse
 	decodeJSON(t, replayResponse, &replayed)
-	if replayed.ID != created.ID || replayed.Title != created.Title {
+	if replayed.ID != created.ID || replayed.Title != created.Title || replayed.Description != created.Description {
 		t.Fatalf("unexpected replay response: %+v", replayed)
 	}
 
 	getResponse := performVideoJSONRequest(router, http.MethodGet, fmt.Sprintf("/api/videos/%d", created.ID), "", "", "")
 	requireStatus(t, getResponse, http.StatusOK)
+	var fetched videoAPIResponse
+	decodeJSON(t, getResponse, &fetched)
+	if fetched.Description != created.Description {
+		t.Fatalf("unexpected fetched response: %+v", fetched)
+	}
 
 	listResponse := performVideoJSONRequest(router, http.MethodGet, "/api/users/42/videos?limit=10&offset=0", "", "", "")
 	requireStatus(t, listResponse, http.StatusOK)
 
 	var list videoListAPIResponse
 	decodeJSON(t, listResponse, &list)
-	if len(list.Items) != 1 || list.Items[0].ID != created.ID || list.Limit != 10 || list.Offset != 0 {
+	if len(list.Items) != 1 || list.Items[0].ID != created.ID || list.Items[0].Description != created.Description || list.Limit != 10 || list.Offset != 0 {
 		t.Fatalf("unexpected author list response: %+v", list)
 	}
 
@@ -222,7 +230,7 @@ func TestVideoAPIFlow(t *testing.T) {
 
 	var mine videoListAPIResponse
 	decodeJSON(t, mineResponse, &mine)
-	if len(mine.Items) != 1 || mine.Items[0].ID != created.ID {
+	if len(mine.Items) != 1 || mine.Items[0].ID != created.ID || mine.Items[0].Description != created.Description {
 		t.Fatalf("unexpected mine list response: %+v", mine)
 	}
 

@@ -63,16 +63,16 @@ func TestRepositoryRejectsInvalidInput(t *testing.T) {
 func TestListTimeFeedMapsPublishedVideos(t *testing.T) {
 	repository, mock := newMockRepository(t)
 	publishedAt := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id AS video_id, author_id, title, media_url, cover_url, like_count, comment_count, favorite_count, published_at FROM "videos" WHERE status = $1 AND published_at IS NOT NULL ORDER BY published_at DESC,id DESC LIMIT $2`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id AS video_id, author_id, title, description, media_url, cover_url, like_count, comment_count, favorite_count, published_at FROM "videos" WHERE status = $1 AND published_at IS NOT NULL ORDER BY published_at DESC,id DESC LIMIT $2`)).
 		WithArgs(domainvideo.StatusPublished, 2).
-		WillReturnRows(sqlmock.NewRows([]string{"video_id", "author_id", "title", "media_url", "cover_url", "like_count", "comment_count", "favorite_count", "published_at"}).
-			AddRow(7, 42, "title", "media", "cover", 3, 4, 5, publishedAt))
+		WillReturnRows(sqlmock.NewRows([]string{"video_id", "author_id", "title", "description", "media_url", "cover_url", "like_count", "comment_count", "favorite_count", "published_at"}).
+			AddRow(7, 42, "title", "description", "media", "cover", 3, 4, 5, publishedAt))
 
 	items, err := repository.ListTimeFeed(context.Background(), nil, 2)
 	if err != nil {
 		t.Fatalf("ListTimeFeed() error = %v", err)
 	}
-	if len(items) != 1 || items[0].VideoID != 7 || items[0].AuthorID != 42 || items[0].Title != "title" || !items[0].PublishedAt.Equal(publishedAt) {
+	if len(items) != 1 || items[0].VideoID != 7 || items[0].AuthorID != 42 || items[0].Title != "title" || items[0].Description != "description" || !items[0].PublishedAt.Equal(publishedAt) {
 		t.Fatalf("ListTimeFeed() items = %+v, want mapped video item", items)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -83,9 +83,9 @@ func TestListTimeFeedMapsPublishedVideos(t *testing.T) {
 // TestListTimeFeedCapsLimit 验证查询数量会保留一条额外记录用于判断是否存在下一页。
 func TestListTimeFeedCapsLimit(t *testing.T) {
 	repository, mock := newMockRepository(t)
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id AS video_id, author_id, title, media_url, cover_url, like_count, comment_count, favorite_count, published_at FROM "videos" WHERE status = $1 AND published_at IS NOT NULL ORDER BY published_at DESC,id DESC LIMIT $2`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id AS video_id, author_id, title, description, media_url, cover_url, like_count, comment_count, favorite_count, published_at FROM "videos" WHERE status = $1 AND published_at IS NOT NULL ORDER BY published_at DESC,id DESC LIMIT $2`)).
 		WithArgs(domainvideo.StatusPublished, domainfeed.MaxLimit+1).
-		WillReturnRows(sqlmock.NewRows([]string{"video_id", "author_id", "title", "media_url", "cover_url", "like_count", "comment_count", "favorite_count", "published_at"}))
+		WillReturnRows(sqlmock.NewRows([]string{"video_id", "author_id", "title", "description", "media_url", "cover_url", "like_count", "comment_count", "favorite_count", "published_at"}))
 
 	if _, err := repository.ListTimeFeed(context.Background(), nil, domainfeed.MaxLimit+1); err != nil {
 		t.Fatalf("ListTimeFeed() error = %v", err)

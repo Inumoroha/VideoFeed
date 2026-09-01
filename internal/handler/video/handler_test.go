@@ -68,7 +68,7 @@ func (r *handlerTestRepository) UpdateStatus(_ context.Context, video *domainvid
 func TestCreateRequiresAuthentication(t *testing.T) {
 	handler := NewHandler(applicationvideo.NewService(&handlerTestRepository{}))
 	recorder := httptest.NewRecorder()
-	ctx := newVideoTestContext(http.MethodPost, "/api/videos", `{"title":"title","media_url":"media","cover_url":"cover"}`, recorder)
+	ctx := newVideoTestContext(http.MethodPost, "/api/videos", `{"title":"title","description":"description","media_url":"media","cover_url":"cover"}`, recorder)
 
 	handler.Create(ctx)
 
@@ -82,7 +82,7 @@ func TestCreateReturnsCreatedVideo(t *testing.T) {
 	repository := &handlerTestRepository{}
 	handler := NewHandler(applicationvideo.NewService(repository))
 	recorder := httptest.NewRecorder()
-	ctx := newVideoTestContext(http.MethodPost, "/api/videos", `{"title":"title","media_url":"media","cover_url":"cover"}`, recorder)
+	ctx := newVideoTestContext(http.MethodPost, "/api/videos", `{"title":"title","description":"description","media_url":"media","cover_url":"cover"}`, recorder)
 	ctx.Set(middleware.ContextUserIDKey, int64(7))
 
 	handler.Create(ctx)
@@ -90,11 +90,26 @@ func TestCreateReturnsCreatedVideo(t *testing.T) {
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("Create() status = %d, want %d", recorder.Code, http.StatusCreated)
 	}
-	if repository.savedVideo == nil || repository.savedVideo.AuthorID != 7 {
+	if repository.savedVideo == nil || repository.savedVideo.AuthorID != 7 || repository.savedVideo.Description != "description" {
 		t.Fatalf("Create() saved video = %+v, want author 7", repository.savedVideo)
 	}
-	if !strings.Contains(recorder.Body.String(), `"id":1`) {
-		t.Fatalf("Create() response = %s, want video id", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), `"id":1`) || !strings.Contains(recorder.Body.String(), `"description":"description"`) {
+		t.Fatalf("Create() response = %s, want video id and description", recorder.Body.String())
+	}
+}
+
+// TestCreateRejectsTooLongDescription 验证超出长度限制的描述会返回客户端错误。
+func TestCreateRejectsTooLongDescription(t *testing.T) {
+	handler := NewHandler(applicationvideo.NewService(&handlerTestRepository{}))
+	recorder := httptest.NewRecorder()
+	body := `{"title":"title","description":"` + strings.Repeat("x", domainvideo.MaxDescriptionLength+1) + `","media_url":"media","cover_url":"cover"}`
+	ctx := newVideoTestContext(http.MethodPost, "/api/videos", body, recorder)
+	ctx.Set(middleware.ContextUserIDKey, int64(7))
+
+	handler.Create(ctx)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("Create() status = %d, want %d; body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
 	}
 }
 

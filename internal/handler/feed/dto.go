@@ -22,6 +22,7 @@ type feedItemResponse struct {
 	VideoID       int64     `json:"video_id"`
 	AuthorID      int64     `json:"author_id"`
 	Title         string    `json:"title"`
+	Description   string    `json:"description"`
 	MediaURL      string    `json:"media_url"`
 	CoverURL      string    `json:"cover_url"`
 	LikeCount     int       `json:"like_count"`
