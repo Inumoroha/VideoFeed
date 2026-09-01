@@ -25,57 +25,33 @@ type feedAPIResponse struct {
 
 // feedItemAPIResponse 表示信息流 API 测试中解析的视频条目。
 type feedItemAPIResponse struct {
-	VideoID       int64     `json:"video_id"`
-	AuthorID      int64     `json:"author_id"`
-	Title         string    `json:"title"`
-	Description   string    `json:"description"`
-	MediaURL      string    `json:"media_url"`
-	CoverURL      string    `json:"cover_url"`
-	LikeCount     int       `json:"like_count"`
-	CommentCount  int       `json:"comment_count"`
-	FavoriteCount int       `json:"favorite_count"`
-	PublishedAt   time.Time `json:"published_at"`
-}
-
-// viewEventAPIResponse 表示观看事件 API 测试中解析的响应。
-type viewEventAPIResponse struct {
-	ID        int64     `json:"id"`
-	VisitorID string    `json:"visitor_id"`
-	VideoID   int64     `json:"video_id"`
-	EventType string    `json:"event_type"`
-	WatchMS   int       `json:"watch_ms"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-// memoryFeedCursor 保存内存仓储中的分页位置和过期时间。
-type memoryFeedCursor struct {
-	cursor    domainfeed.TimeCursor
-	expiresAt time.Time
+	VideoID         int64     `json:"video_id"`
+	AuthorID        int64     `json:"author_id"`
+	AuthorNickname  string    `json:"author_nickname"`
+	AuthorAvatarURL string    `json:"author_avatar_url"`
+	Title           string    `json:"title"`
+	Description     string    `json:"description"`
+	MediaURL        string    `json:"media_url"`
+	CoverURL        string    `json:"cover_url"`
+	LikeCount       int       `json:"like_count"`
+	CommentCount    int       `json:"comment_count"`
+	FavoriteCount   int       `json:"favorite_count"`
+	PublishedAt     time.Time `json:"published_at"`
 }
 
 // memoryFeedRepo 提供信息流 API 流程测试使用的并发安全内存仓储。
 type memoryFeedRepo struct {
-	mu          sync.Mutex
-	items       []*domainfeed.FeedItem
-	nextEventID int64
-	eventsByID  map[int64]*domainfeed.ViewEvent
-	eventsByKey map[string]int64
-	cursors     map[string]memoryFeedCursor
+	mu    sync.Mutex
+	items []*domainfeed.FeedItem
 }
 
 // newMemoryFeedRepo 创建用于信息流 HTTP 流程测试的内存仓储。
 func newMemoryFeedRepo(items []*domainfeed.FeedItem) *memoryFeedRepo {
-	return &memoryFeedRepo{
-		items:       items,
-		nextEventID: 1,
-		eventsByID:  map[int64]*domainfeed.ViewEvent{},
-		eventsByKey: map[string]int64{},
-		cursors:     map[string]memoryFeedCursor{},
-	}
+	return &memoryFeedRepo{items: items}
 }
 
-// ListTimeFeed 按时间和视频 ID 倒序返回内存信息流，并应用游标过滤。
-func (r *memoryFeedRepo) ListTimeFeed(_ context.Context, cursor *domainfeed.TimeCursor, limit int) ([]*domainfeed.FeedItem, error) {
+// ListTimelineFeed 按时间和视频 ID 倒序返回内存信息流，并应用游标过滤。
+func (r *memoryFeedRepo) ListTimelineFeed(_ context.Context, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedItem, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -98,89 +74,32 @@ func (r *memoryFeedRepo) ListTimeFeed(_ context.Context, cursor *domainfeed.Time
 	return items[:limit], nil
 }
 
-// SaveTimeCursor 保存分页游标及其过期时间。
-func (r *memoryFeedRepo) SaveTimeCursor(_ context.Context, token string, cursor *domainfeed.TimeCursor, expiresAt time.Time) error {
-	if token == "" || cursor == nil || !expiresAt.After(time.Now()) {
-		return domainfeed.ErrInvalidCursor
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.cursors[token] = memoryFeedCursor{cursor: *cursor, expiresAt: expiresAt}
-	return nil
-}
-
-// FindTimeCursor 返回未过期的分页游标。
-func (r *memoryFeedRepo) FindTimeCursor(_ context.Context, token string, now time.Time) (*domainfeed.TimeCursor, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	stored, exists := r.cursors[token]
-	if !exists || !stored.expiresAt.After(now) {
-		return nil, domainfeed.ErrTimeCursorNotFound
-	}
-	cursor := stored.cursor
-	return &cursor, nil
-}
-
-// SaveViewEvent 保存观看事件并模拟数据库生成 ID 和创建时间。
-func (r *memoryFeedRepo) SaveViewEvent(_ context.Context, event *domainfeed.ViewEvent) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if event.IdempotencyKey != "" {
-		if _, exists := r.eventsByKey[event.IdempotencyKey]; exists {
-			return domainfeed.ErrDuplicateIdempotencyKey
-		}
-	}
-
-	event.ID = r.nextEventID
-	r.nextEventID++
-	event.CreatedAt = time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
-	r.eventsByID[event.ID] = cloneViewEvent(event)
-	if event.IdempotencyKey != "" {
-		r.eventsByKey[event.IdempotencyKey] = event.ID
-	}
-	return nil
-}
-
-// FindViewEventByIdempotencyKey 返回幂等键对应的观看事件。
-func (r *memoryFeedRepo) FindViewEventByIdempotencyKey(_ context.Context, key string) (*domainfeed.ViewEvent, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	id, exists := r.eventsByKey[key]
-	if !exists {
-		return nil, domainfeed.ErrViewEventNotFound
-	}
-	return cloneViewEvent(r.eventsByID[id]), nil
-}
-
-// TestFeedAPIFlow 验证信息流分页、刷新和观看事件幂等重试的完整 HTTP 流程。
+// TestFeedAPIFlow 验证信息流分页、刷新和响应字段的完整 HTTP 流程。
 func TestFeedAPIFlow(t *testing.T) {
 	router := newFeedRouter(seedFeedItems())
 
-	firstPageResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/time?limit=2", "", "")
+	firstPageResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/time?limit=2", "")
 	requireStatus(t, firstPageResponse, http.StatusOK)
 
 	var firstPage feedAPIResponse
 	decodeJSON(t, firstPageResponse, &firstPage)
-	if len(firstPage.Items) != 2 || firstPage.Items[0].VideoID != 3 || firstPage.Items[0].Description != "new description" || firstPage.Items[1].VideoID != 2 {
+	if len(firstPage.Items) != 2 || firstPage.Items[0].VideoID != 3 || firstPage.Items[0].Description != "new description" || firstPage.Items[0].AuthorNickname != "new author" || firstPage.Items[1].VideoID != 2 {
 		t.Fatalf("unexpected first page response: %+v", firstPage)
 	}
 	if firstPage.NextCursor == "" || !firstPage.HasMore {
 		t.Fatalf("unexpected first page cursor: %+v", firstPage)
 	}
 
-	secondPageResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/time?cursor="+firstPage.NextCursor+"&limit=2", "", "")
+	secondPageResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/time?cursor="+firstPage.NextCursor+"&limit=2", "")
 	requireStatus(t, secondPageResponse, http.StatusOK)
 
 	var secondPage feedAPIResponse
 	decodeJSON(t, secondPageResponse, &secondPage)
-	if len(secondPage.Items) != 1 || secondPage.Items[0].VideoID != 1 || secondPage.HasMore {
+	if len(secondPage.Items) != 1 || secondPage.Items[0].VideoID != 1 || secondPage.HasMore || secondPage.NextCursor != "" {
 		t.Fatalf("unexpected second page response: %+v", secondPage)
 	}
 
-	refreshResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/refresh?limit=1", "", "")
+	refreshResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/refresh?limit=1", "")
 	requireStatus(t, refreshResponse, http.StatusOK)
 
 	var refresh feedAPIResponse
@@ -188,44 +107,17 @@ func TestFeedAPIFlow(t *testing.T) {
 	if len(refresh.Items) != 1 || refresh.Items[0].VideoID != 3 || !refresh.HasMore {
 		t.Fatalf("unexpected refresh response: %+v", refresh)
 	}
-
-	eventResponse := performFeedJSONRequest(router, http.MethodPost, "/api/feed/view-events", `{"visitor_id":"visitor-001","video_id":3,"event_type":"view","watch_ms":3000}`, "event-1")
-	requireStatus(t, eventResponse, http.StatusCreated)
-
-	var event viewEventAPIResponse
-	decodeJSON(t, eventResponse, &event)
-	if event.ID == 0 || event.VisitorID != "visitor-001" || event.VideoID != 3 || event.EventType != domainfeed.EventTypeView || event.WatchMS != 3000 {
-		t.Fatalf("unexpected event response: %+v", event)
-	}
-
-	replayResponse := performFeedJSONRequest(router, http.MethodPost, "/api/feed/view-events", `{"visitor_id":"visitor-002","video_id":2,"event_type":"COMPLETE","watch_ms":5000}`, "event-1")
-	requireStatus(t, replayResponse, http.StatusOK)
-
-	var replayed viewEventAPIResponse
-	decodeJSON(t, replayResponse, &replayed)
-	if replayed.ID != event.ID || replayed.VideoID != event.VideoID || replayed.VisitorID != event.VisitorID {
-		t.Fatalf("unexpected replay response: %+v", replayed)
-	}
 }
 
-// TestFeedAPIValidation 验证信息流查询和观看事件接口的参数校验响应。
+// TestFeedAPIValidation 验证信息流查询接口的参数校验响应。
 func TestFeedAPIValidation(t *testing.T) {
 	router := newFeedRouter(seedFeedItems())
 
-	badLimitResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/time?limit=0", "", "")
+	badLimitResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/time?limit=0", "")
 	requireStatus(t, badLimitResponse, http.StatusBadRequest)
 
-	badCursorResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/time?cursor=bad-cursor", "", "")
+	badCursorResponse := performFeedJSONRequest(router, http.MethodGet, "/api/feed/time?cursor=bad-cursor", "")
 	requireStatus(t, badCursorResponse, http.StatusBadRequest)
-
-	emptyVideoResponse := performFeedJSONRequest(router, http.MethodPost, "/api/feed/view-events", `{"visitor_id":"visitor-001","event_type":"VIEW","watch_ms":3000}`, "")
-	requireStatus(t, emptyVideoResponse, http.StatusBadRequest)
-
-	badEventTypeResponse := performFeedJSONRequest(router, http.MethodPost, "/api/feed/view-events", `{"visitor_id":"visitor-001","video_id":3,"event_type":"SKIP","watch_ms":3000}`, "")
-	requireStatus(t, badEventTypeResponse, http.StatusBadRequest)
-
-	badWatchResponse := performFeedJSONRequest(router, http.MethodPost, "/api/feed/view-events", `{"visitor_id":"visitor-001","video_id":3,"event_type":"VIEW","watch_ms":-1}`, "")
-	requireStatus(t, badWatchResponse, http.StatusBadRequest)
 }
 
 // newFeedRouter 使用内存仓储组装信息流测试路由。
@@ -233,27 +125,22 @@ func newFeedRouter(items []*domainfeed.FeedItem) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 
-	repo := newMemoryFeedRepo(items)
-	service := applicationfeed.NewService(repo)
+	service := applicationfeed.NewService(newMemoryFeedRepo(items))
 	handler := NewHandler(service)
 
 	api := router.Group("/api")
 	feed := api.Group("/feed")
-	feed.GET("/time", handler.Time)
+	feed.GET("/time", handler.Timeline)
 	feed.GET("/refresh", handler.Refresh)
-	feed.POST("/view-events", handler.ReportViewEvent)
 
 	return router
 }
 
-// performFeedJSONRequest 向信息流测试路由发送带 JSON 和幂等键的 HTTP 请求。
-func performFeedJSONRequest(router *gin.Engine, method, path, body, idempotencyKey string) *httptest.ResponseRecorder {
+// performFeedJSONRequest 向信息流测试路由发送 HTTP 请求。
+func performFeedJSONRequest(router *gin.Engine, method, path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
-	}
-	if idempotencyKey != "" {
-		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
 
 	resp := httptest.NewRecorder()
@@ -265,9 +152,9 @@ func performFeedJSONRequest(router *gin.Engine, method, path, body, idempotencyK
 func seedFeedItems() []*domainfeed.FeedItem {
 	base := time.Date(2026, time.May, 3, 12, 0, 0, 0, time.UTC)
 	return []*domainfeed.FeedItem{
-		domainfeed.RestoreFeedItem(1, 10, "old video", "old description", "https://example.com/1.mp4", "https://example.com/1.jpg", 1, 2, 3, base.Add(-2*time.Hour)),
-		domainfeed.RestoreFeedItem(2, 20, "middle video", "middle description", "https://example.com/2.mp4", "https://example.com/2.jpg", 4, 5, 6, base.Add(-1*time.Hour)),
-		domainfeed.RestoreFeedItem(3, 30, "new video", "new description", "https://example.com/3.mp4", "https://example.com/3.jpg", 7, 8, 9, base),
+		domainfeed.RestoreFeedItem(1, 10, "old author", "old avatar", "old video", "old description", "https://example.com/1.mp4", "https://example.com/1.jpg", 1, 2, 3, base.Add(-2*time.Hour)),
+		domainfeed.RestoreFeedItem(2, 20, "middle author", "middle avatar", "middle video", "middle description", "https://example.com/2.mp4", "https://example.com/2.jpg", 4, 5, 6, base.Add(-1*time.Hour)),
+		domainfeed.RestoreFeedItem(3, 30, "new author", "new avatar", "new video", "new description", "https://example.com/3.mp4", "https://example.com/3.jpg", 7, 8, 9, base),
 	}
 }
 
@@ -290,16 +177,6 @@ func decodeJSON(t *testing.T, response *httptest.ResponseRecorder, target any) {
 // cloneFeedItem 复制信息流条目，避免测试仓储暴露内部状态。
 func cloneFeedItem(item *domainfeed.FeedItem) *domainfeed.FeedItem {
 	cloned := *item
-	return &cloned
-}
-
-// cloneViewEvent 复制观看事件及其用户 ID 指针，避免测试仓储暴露内部状态。
-func cloneViewEvent(event *domainfeed.ViewEvent) *domainfeed.ViewEvent {
-	cloned := *event
-	if event.UserID != nil {
-		userID := *event.UserID
-		cloned.UserID = &userID
-	}
 	return &cloned
 }
 
