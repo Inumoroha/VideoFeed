@@ -3,7 +3,6 @@ package feed
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
@@ -12,24 +11,27 @@ import (
 	"gorm.io/gorm"
 )
 
+// Repository 使用 GORM 持久化信息流数据。
 type Repository struct {
 	db *gorm.DB
 }
 
 var _ domainfeed.Repository = (*Repository)(nil)
 
-// timeFeedVideoModel 表示时间线查询所需的视频字段。
-type timeFeedVideoModel struct {
-	VideoID       int64     `gorm:"column:video_id"`
-	AuthorID      int64     `gorm:"column:author_id"`
-	Title         string    `gorm:"column:title"`
-	Description   string    `gorm:"column:description"`
-	MediaURL      string    `gorm:"column:media_url"`
-	CoverURL      string    `gorm:"column:cover_url"`
-	LikeCount     int       `gorm:"column:like_count"`
-	CommentCount  int       `gorm:"column:comment_count"`
-	FavoriteCount int       `gorm:"column:favorite_count"`
-	PublishedAt   time.Time `gorm:"column:published_at"`
+// timelineFeedVideoModel 表示时间线查询所需的视频及作者字段。
+type timelineFeedVideoModel struct {
+	VideoID         int64     `gorm:"column:video_id"`
+	AuthorID        int64     `gorm:"column:author_id"`
+	AuthorNickname  string    `gorm:"column:author_nickname"`
+	AuthorAvatarURL string    `gorm:"column:author_avatar_url"`
+	Title           string    `gorm:"column:title"`
+	Description     string    `gorm:"column:description"`
+	MediaURL        string    `gorm:"column:media_url"`
+	CoverURL        string    `gorm:"column:cover_url"`
+	LikeCount       int       `gorm:"column:like_count"`
+	CommentCount    int       `gorm:"column:comment_count"`
+	FavoriteCount   int       `gorm:"column:favorite_count"`
+	PublishedAt     time.Time `gorm:"column:published_at"`
 }
 
 // New 创建基于 GORM 数据库实例的信息流仓储。
@@ -37,8 +39,8 @@ func New(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
 
-// ListTimeFeed 按发布时间和视频 ID 倒序分页查询已发布视频流。
-func (r *Repository) ListTimeFeed(ctx context.Context, cursor *domainfeed.TimeCursor, limit int) ([]*domainfeed.FeedItem, error) {
+// ListTimelineFeed 按发布时间和视频 ID 倒序分页查询已发布视频流。
+func (r *Repository) ListTimelineFeed(ctx context.Context, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedItem, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("feed repository is not initialized")
 	}
@@ -48,22 +50,23 @@ func (r *Repository) ListTimeFeed(ctx context.Context, cursor *domainfeed.TimeCu
 	if limit > domainfeed.MaxLimit+1 {
 		limit = domainfeed.MaxLimit + 1
 	}
-	if err := cursor.Validate(); err != nil {
-		return nil, err
+	if cursor != nil && (cursor.PublishedAt.IsZero() || cursor.VideoID <= 0) {
+		return nil, domainfeed.ErrInvalidCursor
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	var models []timeFeedVideoModel
+	var models []timelineFeedVideoModel
 	query := r.db.WithContext(ctx).
-		Table("videos").
-		Select("id AS video_id, author_id, title, description, media_url, cover_url, like_count, comment_count, favorite_count, published_at").
-		Where("status = ? AND published_at IS NOT NULL", domainvideo.StatusPublished)
+		Table("videos AS v").
+		Select("v.id AS video_id, v.author_id, COALESCE(u.nickname, '') AS author_nickname, COALESCE(u.avatar_url, '') AS author_avatar_url, v.title, v.description, v.media_url, v.cover_url, v.like_count, v.comment_count, v.favorite_count, v.published_at").
+		Joins("LEFT JOIN users AS u ON u.id = v.author_id").
+		Where("v.status = ? AND v.published_at IS NOT NULL", domainvideo.StatusPublished)
 
 	if cursor != nil {
 		query = query.Where(
-			"(published_at < ? OR (published_at = ? AND id < ?))",
+			"(v.published_at < ? OR (v.published_at = ? AND v.id < ?))",
 			cursor.PublishedAt,
 			cursor.PublishedAt,
 			cursor.VideoID,
@@ -71,8 +74,8 @@ func (r *Repository) ListTimeFeed(ctx context.Context, cursor *domainfeed.TimeCu
 	}
 
 	err := query.
-		Order("published_at DESC").
-		Order("id DESC").
+		Order("v.published_at DESC").
+		Order("v.id DESC").
 		Limit(limit).
 		Scan(&models).
 		Error
@@ -85,6 +88,8 @@ func (r *Repository) ListTimeFeed(ctx context.Context, cursor *domainfeed.TimeCu
 		items = append(items, domainfeed.RestoreFeedItem(
 			model.VideoID,
 			model.AuthorID,
+			model.AuthorNickname,
+			model.AuthorAvatarURL,
 			model.Title,
 			model.Description,
 			model.MediaURL,
@@ -96,160 +101,4 @@ func (r *Repository) ListTimeFeed(ctx context.Context, cursor *domainfeed.TimeCu
 		))
 	}
 	return items, nil
-}
-
-// SaveTimeCursor 保存时间线分页游标及其有效期。
-func (r *Repository) SaveTimeCursor(ctx context.Context, token string, cursor *domainfeed.TimeCursor, expiresAt time.Time) error {
-	if r == nil || r.db == nil {
-		return errors.New("feed repository is not initialized")
-	}
-	token = strings.TrimSpace(token)
-	if token == "" || expiresAt.IsZero() {
-		return domainfeed.ErrInvalidCursor
-	}
-	if err := cursor.Validate(); err != nil {
-		return err
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	model := FeedCursorModel{
-		Scene:       domainfeed.TimeCursorScene,
-		CursorToken: token,
-		PublishedAt: cursor.PublishedAt,
-		VideoID:     cursor.VideoID,
-		ExpiredAt:   expiresAt,
-	}
-	if err := r.db.WithContext(ctx).Create(&model).Error; err != nil {
-		return err
-	}
-	return nil
-}
-
-// FindTimeCursor 查询尚未过期的时间线分页游标。
-func (r *Repository) FindTimeCursor(ctx context.Context, token string, now time.Time) (*domainfeed.TimeCursor, error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("feed repository is not initialized")
-	}
-	token = strings.TrimSpace(token)
-	if token == "" || now.IsZero() {
-		return nil, domainfeed.ErrInvalidCursor
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	var model FeedCursorModel
-	err := r.db.WithContext(ctx).
-		Where("scene = ? AND cursor_token = ? AND expired_at > ?", domainfeed.TimeCursorScene, token, now).
-		First(&model).
-		Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, domainfeed.ErrTimeCursorNotFound
-		}
-		return nil, err
-	}
-
-	cursor := &domainfeed.TimeCursor{PublishedAt: model.PublishedAt, VideoID: model.VideoID}
-	if err := cursor.Validate(); err != nil {
-		return nil, err
-	}
-	return cursor, nil
-}
-
-// SaveViewEvent 保存观看事件，并将数据库生成的 ID 和创建时间回写到领域对象。
-func (r *Repository) SaveViewEvent(ctx context.Context, event *domainfeed.ViewEvent) error {
-	if r == nil || r.db == nil {
-		return errors.New("feed repository is not initialized")
-	}
-	if event == nil {
-		return errors.New("view event is nil")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	model := FeedViewEventModel{
-		UserID:         event.UserID,
-		VisitorID:      event.VisitorID,
-		VideoID:        event.VideoID,
-		EventType:      event.EventType,
-		WatchMS:        event.WatchMS,
-		IdempotencyKey: idempotencyKeyPtr(event.IdempotencyKey),
-	}
-
-	if err := r.db.WithContext(ctx).Create(&model).Error; err != nil {
-		if isDuplicateKeyError(err) {
-			return domainfeed.ErrDuplicateIdempotencyKey
-		}
-		return err
-	}
-
-	event.ID = model.ID
-	event.CreatedAt = model.CreatedAt
-	return nil
-}
-
-// FindViewEventByIdempotencyKey 按幂等键查询已保存的观看事件。
-func (r *Repository) FindViewEventByIdempotencyKey(ctx context.Context, key string) (*domainfeed.ViewEvent, error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("feed repository is not initialized")
-	}
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return nil, domainfeed.ErrViewEventNotFound
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	var model FeedViewEventModel
-	err := r.db.WithContext(ctx).
-		Where("idempotency_key = ?", key).
-		First(&model).
-		Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, domainfeed.ErrViewEventNotFound
-		}
-		return nil, err
-	}
-	return restoreViewEvent(model), nil
-}
-
-// restoreViewEvent 将观看事件持久化模型转换为领域对象。
-func restoreViewEvent(model FeedViewEventModel) *domainfeed.ViewEvent {
-	return domainfeed.RestoreViewEvent(
-		model.ID,
-		model.UserID,
-		model.VisitorID,
-		model.VideoID,
-		model.EventType,
-		model.WatchMS,
-		idempotencyKeyValue(model.IdempotencyKey),
-		model.CreatedAt,
-	)
-}
-
-// idempotencyKeyPtr 将空幂等键转换为 nil，避免占用唯一索引值。
-func idempotencyKeyPtr(value string) *string {
-	if value == "" {
-		return nil
-	}
-	return &value
-}
-
-// idempotencyKeyValue 将数据库中的可空幂等键转换为空字符串。
-func idempotencyKeyValue(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
-}
-
-// isDuplicateKeyError 判断错误是否为 GORM 翻译后的唯一键冲突。
-func isDuplicateKeyError(err error) bool {
-	return errors.Is(err, gorm.ErrDuplicatedKey)
 }
