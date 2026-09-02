@@ -364,6 +364,177 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/interactions/like:
+    post:
+      tags:
+        - Interaction
+      summary: Toggle the current user's like for a video
+      operationId: toggleVideoLike
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ToggleActionRequest'
+      responses:
+        '200':
+          description: Updated like state and interaction counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToggleActionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/VideoNotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/interactions/favorite:
+    post:
+      tags:
+        - Interaction
+      summary: Toggle the current user's favorite for a video
+      operationId: toggleVideoFavorite
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ToggleActionRequest'
+      responses:
+        '200':
+          description: Updated favorite state and interaction counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToggleActionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/VideoNotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/comments:
+    get:
+      tags:
+        - Interaction
+      summary: List comments for a video
+      operationId: listVideoComments
+      security: []
+      parameters:
+        - name: video_id
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: URL-safe Base64 cursor returned by the previous page.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Comment page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentListResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+        - Interaction
+      summary: Create a comment for a video
+      operationId: createVideoComment
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommentRequest'
+      responses:
+        '201':
+          description: Comment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateCommentResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/VideoNotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/comments/{commentId}:
+    parameters:
+      - name: commentId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+    delete:
+      tags:
+        - Interaction
+      summary: Delete a comment owned by the current user or an administrator
+      operationId: deleteVideoComment
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Comment deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteCommentResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: The current user cannot delete this comment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: comment permission denied
+        '404':
+          $ref: '#/components/responses/CommentNotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/uploads:
     post:
       tags:
@@ -395,6 +566,14 @@ paths:
           $ref: '#/components/responses/InternalServerError'
 components:
   parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 128
+      description: Optional key used to safely retry the same request.
     VideoLimit:
       name: limit
       in: query
@@ -717,6 +896,124 @@ components:
         published_at:
           type: string
           format: date-time
+    ToggleActionRequest:
+      type: object
+      required:
+        - video_id
+      properties:
+        video_id:
+          type: integer
+          format: int64
+          minimum: 1
+    ToggleActionResponse:
+      type: object
+      required:
+        - video_id
+        - action_type
+        - active
+        - like_count
+        - favorite_count
+      properties:
+        video_id:
+          type: integer
+          format: int64
+        action_type:
+          type: string
+          enum:
+            - LIKE
+            - FAVORITE
+        active:
+          type: boolean
+        like_count:
+          type: integer
+          minimum: 0
+        favorite_count:
+          type: integer
+          minimum: 0
+    CreateCommentRequest:
+      type: object
+      required:
+        - video_id
+        - content
+      properties:
+        video_id:
+          type: integer
+          format: int64
+          minimum: 1
+        content:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          pattern: '.*\S.*'
+    CommentResponse:
+      type: object
+      required:
+        - id
+        - video_id
+        - user_id
+        - user_nickname
+        - user_avatar_url
+        - content
+        - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        video_id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        user_nickname:
+          type: string
+        user_avatar_url:
+          type: string
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    CreateCommentResponse:
+      allOf:
+        - $ref: '#/components/schemas/CommentResponse'
+        - type: object
+          required:
+            - comment_count
+          properties:
+            comment_count:
+              type: integer
+              minimum: 0
+    CommentListResponse:
+      type: object
+      required:
+        - items
+        - next_cursor
+        - has_more
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommentResponse'
+        next_cursor:
+          type: string
+        has_more:
+          type: boolean
+    DeleteCommentResponse:
+      type: object
+      required:
+        - comment_id
+        - status
+        - comment_count
+      properties:
+        comment_id:
+          type: integer
+          format: int64
+        status:
+          type: integer
+        comment_count:
+          type: integer
+          minimum: 0
     UploadRequest:
       type: object
       required:
@@ -826,3 +1123,11 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
           example:
             error: video permission denied
+    CommentNotFound:
+      description: Comment was not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: resource not found

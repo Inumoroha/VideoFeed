@@ -13,6 +13,11 @@ import (
 
 const defaultCommentLimit = 20
 
+// actionCounterRepository 表示能够返回视频完整互动统计的可选仓储能力。
+type actionCounterRepository interface {
+	GetActionCounts(ctx context.Context, videoID int64) (likeCount int, favoriteCount int, err error)
+}
+
 // Service 编排点赞、收藏和评论相关的应用用例。
 type Service struct {
 	repo domaininteraction.Repository
@@ -69,6 +74,9 @@ func (s *Service) CreateComment(ctx context.Context, userID int64, videoID int64
 		if isExpectedDomainError(err) {
 			return nil, err
 		}
+		return nil, ErrSaveInteractionFailed
+	}
+	if created == nil {
 		return nil, ErrSaveInteractionFailed
 	}
 
@@ -182,18 +190,32 @@ func (s *Service) toggleAction(ctx context.Context, userID int64, videoID int64,
 	if action == nil {
 		return nil, ErrUpdateInteractionFailed
 	}
+	likeCount, favoriteCount := 0, 0
+	if counterRepository, ok := s.repo.(actionCounterRepository); ok {
+		likeCount, favoriteCount, err = counterRepository.GetActionCounts(ctx, videoID)
+		if err != nil {
+			if isExpectedDomainError(err) {
+				return nil, err
+			}
+			return nil, ErrLoadInteractionFailed
+		}
+	} else {
+		switch action.ActionType {
+		case domaininteraction.ActionTypeLike:
+			likeCount = count
+		case domaininteraction.ActionTypeFavorite:
+			favoriteCount = count
+		}
+	}
 
 	result := &ToggleActionResult{
-		VideoID:    action.VideoID,
-		ActionType: action.ActionType,
-		Active:     action.Active(),
+		VideoID:       action.VideoID,
+		ActionType:    action.ActionType,
+		Active:        action.Active(),
+		LikeCount:     likeCount,
+		FavoriteCount: favoriteCount,
 	}
-	switch action.ActionType {
-	case domaininteraction.ActionTypeLike:
-		result.LikeCount = count
-	case domaininteraction.ActionTypeFavorite:
-		result.FavoriteCount = count
-	default:
+	if action.ActionType != domaininteraction.ActionTypeLike && action.ActionType != domaininteraction.ActionTypeFavorite {
 		return nil, ErrUpdateInteractionFailed
 	}
 	return result, nil

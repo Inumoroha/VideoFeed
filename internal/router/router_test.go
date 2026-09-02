@@ -10,6 +10,7 @@ import (
 	authjwt "github.com/inumoroha/video-feed/internal/auth/jwt"
 	"github.com/inumoroha/video-feed/internal/config"
 	feedhandler "github.com/inumoroha/video-feed/internal/handler/feed"
+	interactionhandler "github.com/inumoroha/video-feed/internal/handler/interaction"
 	uploadhandler "github.com/inumoroha/video-feed/internal/handler/upload"
 	userhandler "github.com/inumoroha/video-feed/internal/handler/user"
 	videohandler "github.com/inumoroha/video-feed/internal/handler/video"
@@ -50,7 +51,7 @@ func TestRegisterRoutesRegistersExpectedPaths(t *testing.T) {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 
-	registerRoutes(engine, userhandler.NewHandler(nil), videohandler.NewHandler(nil), feedhandler.NewHandler(nil), uploadhandler.NewHandler(t.TempDir()), manager)
+	registerRoutes(engine, userhandler.NewHandler(nil), videohandler.NewHandler(nil), feedhandler.NewHandler(nil), uploadhandler.NewHandler(t.TempDir()), manager, interactionhandler.NewHandler(nil))
 	routes := make(map[string]bool)
 	for _, route := range engine.Routes() {
 		routes[route.Method+" "+route.Path] = true
@@ -69,6 +70,11 @@ func TestRegisterRoutesRegistersExpectedPaths(t *testing.T) {
 		http.MethodGet + " /api/users/:userId/videos",
 		http.MethodGet + " /api/feed/timeline",
 		http.MethodGet + " /api/feed/refresh",
+		http.MethodPost + " /api/interactions/like",
+		http.MethodPost + " /api/interactions/favorite",
+		http.MethodGet + " /api/comments",
+		http.MethodPost + " /api/comments",
+		http.MethodDelete + " /api/comments/:commentId",
 		http.MethodPost + " /api/uploads",
 	} {
 		if !routes[route] {

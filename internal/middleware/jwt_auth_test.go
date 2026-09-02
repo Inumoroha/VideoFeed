@@ -62,6 +62,10 @@ func TestNewJWTAuthMiddlewareSetsUserID(t *testing.T) {
 	if !exists || userID != int64(42) {
 		t.Fatalf("context user ID = %v, exists = %t, want 42 and true", userID, exists)
 	}
+	role, exists := ginContext.Get(ContextUserRoleKey)
+	if !exists || role != "user" {
+		t.Fatalf("context user role = %v, exists = %t, want user and true", role, exists)
+	}
 }
 
 // TestNewOptionalJWTAuthMiddlewareAllowsGuest 验证可选认证中间件允许无令牌访客请求继续执行。

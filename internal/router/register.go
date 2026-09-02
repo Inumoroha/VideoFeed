@@ -6,17 +6,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 	applicationfeed "github.com/inumoroha/video-feed/internal/application/feed"
+	applicationinteraction "github.com/inumoroha/video-feed/internal/application/interaction"
 	applicationuser "github.com/inumoroha/video-feed/internal/application/user"
 	applicationvideo "github.com/inumoroha/video-feed/internal/application/video"
 	authjwt "github.com/inumoroha/video-feed/internal/auth/jwt"
 	"github.com/inumoroha/video-feed/internal/config"
 	"github.com/inumoroha/video-feed/internal/handler"
 	feedhandler "github.com/inumoroha/video-feed/internal/handler/feed"
+	interactionhandler "github.com/inumoroha/video-feed/internal/handler/interaction"
 	uploadhandler "github.com/inumoroha/video-feed/internal/handler/upload"
 	userhandler "github.com/inumoroha/video-feed/internal/handler/user"
 	videohandler "github.com/inumoroha/video-feed/internal/handler/video"
 
 	feedpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/feed"
+	interactionpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/interaction"
 	userpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/user"
 	videopersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/video"
 	"github.com/inumoroha/video-feed/internal/middleware"
@@ -45,6 +48,9 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	if err := gormDB.AutoMigrate(&videopersistence.VideoStatModel{}); err != nil {
 		return fmt.Errorf("migrate video stats: %w", err)
 	}
+	if err := gormDB.AutoMigrate(&interactionpersistence.ActionModel{}, &interactionpersistence.CommentModel{}); err != nil {
+		return fmt.Errorf("migrate interactions: %w", err)
+	}
 	if err := videopersistence.EnsureStats(gormDB); err != nil {
 		return fmt.Errorf("ensure video stats: %w", err)
 	}
@@ -63,6 +69,9 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	feedRepository := feedpersistence.New(gormDB)
 	feedService := applicationfeed.NewService(feedRepository)
 	feedHandler := feedhandler.NewHandler(feedService)
+	interactionRepository := interactionpersistence.New(gormDB)
+	interactionService := applicationinteraction.NewService(interactionRepository)
+	interactionHandler := interactionhandler.NewHandler(interactionService)
 	uploadRoot, err := filepath.Abs("./uploads")
 	if err != nil {
 		return fmt.Errorf("resolve upload directory: %w", err)
@@ -71,13 +80,13 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	g.GET("/health", handler.Health)
 	g.Static("/uploads", uploadRoot)
 
-	registerRoutes(g, userHandler, videoHandler, feedHandler, uploadHandler, jwtManager)
+	registerRoutes(g, userHandler, videoHandler, feedHandler, uploadHandler, jwtManager, interactionHandler)
 
 	return nil
 }
 
-// registerRoutes 注册认证、用户、视频和信息流接口。
-func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandler *videohandler.Handler, feedHandler *feedhandler.Handler, uploadHandler *uploadhandler.Handler, jwtManager *authjwt.Manager) {
+// registerRoutes 注册认证、用户、视频、互动、信息流和上传接口；互动处理器为空时跳过互动路由。
+func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandler *videohandler.Handler, feedHandler *feedhandler.Handler, uploadHandler *uploadhandler.Handler, jwtManager *authjwt.Manager, interactionHandlers ...*interactionhandler.Handler) {
 	authMiddleware := middleware.NewJWTAuthMiddleware(jwtManager)
 	api := g.Group("/api")
 
@@ -100,6 +109,17 @@ func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandle
 	feed := api.Group("/feed")
 	feed.GET("/timeline", feedHandler.Timeline)
 	feed.GET("/refresh", feedHandler.Refresh)
+
+	if len(interactionHandlers) > 0 && interactionHandlers[0] != nil {
+		interactionHandler := interactionHandlers[0]
+		interactions := api.Group("/interactions", authMiddleware)
+		interactions.POST("/like", interactionHandler.ToggleLike)
+		interactions.POST("/favorite", interactionHandler.ToggleFavorite)
+		comments := api.Group("/comments")
+		comments.GET("", interactionHandler.ListComments)
+		comments.POST("", authMiddleware, interactionHandler.CreateComment)
+		comments.DELETE("/:commentId", authMiddleware, interactionHandler.DeleteComment)
+	}
 
 	uploads := api.Group("/uploads", authMiddleware)
 	uploads.POST("", uploadHandler.Create)

@@ -119,6 +119,25 @@ func (r *Repository) ToggleAction(ctx context.Context, userID int64, videoID int
 	return result, count, nil
 }
 
+// GetActionCounts 返回视频当前的点赞数和收藏数。
+func (r *Repository) GetActionCounts(ctx context.Context, videoID int64) (int, int, error) {
+	if err := r.validateRepository(); err != nil {
+		return 0, 0, err
+	}
+	if videoID <= 0 {
+		return 0, 0, domaininteraction.ErrInvalidVideoID
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var stat infravideo.VideoStatModel
+	if err := r.db.WithContext(ctx).Where("video_id = ?", videoID).Take(&stat).Error; err != nil {
+		return 0, 0, mapVideoError(err)
+	}
+	return stat.LikeCount, stat.FavoriteCount, nil
+}
+
 // CreateComment 创建评论并在同一事务中增加视频评论统计。
 func (r *Repository) CreateComment(ctx context.Context, comment *domaininteraction.Comment) (*domaininteraction.Comment, int, error) {
 	if err := r.validateRepository(); err != nil {
@@ -247,8 +266,8 @@ func (r *Repository) ListComments(ctx context.Context, videoID int64, cursor *do
 	if limit <= 0 {
 		return nil, domaininteraction.ErrInvalidLimit
 	}
-	if limit > domaininteraction.MaxLimit {
-		limit = domaininteraction.MaxLimit
+	if limit > domaininteraction.MaxLimit+1 {
+		limit = domaininteraction.MaxLimit + 1
 	}
 	if cursor != nil && (cursor.CreatedAt.IsZero() || cursor.CommentID <= 0) {
 		return nil, domaininteraction.ErrInvalidCursor

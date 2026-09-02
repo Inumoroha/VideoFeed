@@ -19,6 +19,8 @@ type interactionServiceRepository struct {
 	toggleAction   *domaininteraction.Action
 	toggleCount    int
 	toggleErr      error
+	likeCount      int
+	favoriteCount  int
 	deleteComment  *domaininteraction.Comment
 	deleteCount    int
 	deleteErr      error
@@ -28,6 +30,11 @@ type interactionServiceRepository struct {
 // ToggleAction 返回预设的互动动作结果。
 func (r *interactionServiceRepository) ToggleAction(context.Context, int64, int64, string, string) (*domaininteraction.Action, int, error) {
 	return r.toggleAction, r.toggleCount, r.toggleErr
+}
+
+// GetActionCounts 返回预设的视频点赞和收藏统计。
+func (r *interactionServiceRepository) GetActionCounts(context.Context, int64) (int, int, error) {
+	return r.likeCount, r.favoriteCount, nil
 }
 
 // CreateComment 返回预设的评论创建结果。
@@ -94,6 +101,22 @@ func TestListCommentsNormalizesLimit(t *testing.T) {
 	}
 	if repository.listLimit != defaultCommentLimit+1 {
 		t.Fatalf("ListComments() repository limit = %d, want %d", repository.listLimit, defaultCommentLimit+1)
+	}
+}
+
+// TestToggleLikeReturnsBothActionCounts 验证点赞响应同时包含点赞和收藏统计。
+func TestToggleLikeReturnsBothActionCounts(t *testing.T) {
+	repository := &interactionServiceRepository{
+		toggleAction:  &domaininteraction.Action{VideoID: 3, ActionType: domaininteraction.ActionTypeLike, Status: domaininteraction.ActionStatusActive},
+		likeCount:     8,
+		favoriteCount: 5,
+	}
+	result, err := NewService(repository).ToggleLike(context.Background(), 1, 3, "")
+	if err != nil {
+		t.Fatalf("ToggleLike() error = %v", err)
+	}
+	if result.LikeCount != 8 || result.FavoriteCount != 5 {
+		t.Fatalf("ToggleLike() counts = (%d, %d), want (8, 5)", result.LikeCount, result.FavoriteCount)
 	}
 }
 

@@ -64,6 +64,7 @@ func NewJWTAuthMiddleware(jwtManager *authjwt.Manager) gin.HandlerFunc {
 		}
 
 		c.Set(ContextUserIDKey, claims.UserID)
+		c.Set(ContextUserRoleKey, claims.Role)
 		c.Next()
 	}
 }
