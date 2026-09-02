@@ -9,6 +9,7 @@ import (
 )
 
 const ContextUserIDKey = "auth_user_id"
+const ContextUserRoleKey = "auth_user_role"
 
 // NewOptionalJWTAuthMiddleware 创建可选认证中间件，无令牌时允许访客请求继续执行。
 func NewOptionalJWTAuthMiddleware(jwtManager *authjwt.Manager) gin.HandlerFunc {
