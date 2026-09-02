@@ -65,8 +65,8 @@ func TestSaveMapsDuplicateIdempotencyKey(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO "videos" ("author_id","title","description","media_url","cover_url","status","like_count","comment_count","favorite_count","published_at","idempotency_key","created_at","updated_at") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING "id"`)).
-		WithArgs(video.AuthorID, video.Title, video.Description, video.MediaURL, video.CoverURL, video.Status, video.LikeCount, video.CommentCount, video.FavoriteCount, nil, "key", sqlmock.AnyArg(), sqlmock.AnyArg()).
+	mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO "videos" ("author_id","title","description","media_url","cover_url","status","published_at","idempotency_key","created_at","updated_at") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING "id"`)).
+		WithArgs(video.AuthorID, video.Title, video.Description, video.MediaURL, video.CoverURL, video.Status, nil, "key", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(gorm.ErrDuplicatedKey)
 	mock.ExpectRollback()
 
@@ -81,7 +81,7 @@ func TestSaveMapsDuplicateIdempotencyKey(t *testing.T) {
 // TestFindByIDFiltersUnpublishedVideo 验证公开视频查询仅匹配已发布状态。
 func TestFindByIDFiltersUnpublishedVideo(t *testing.T) {
 	repository, mock := newMockRepository(t)
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "videos" WHERE id = $1 AND status = $2 ORDER BY "videos"."id" LIMIT $3`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT v.id, v.author_id, v.title, v.description, v.media_url, v.cover_url, v.status, COALESCE(vs.like_count, 0) AS like_count, COALESCE(vs.comment_count, 0) AS comment_count, COALESCE(vs.favorite_count, 0) AS favorite_count, v.published_at, v.idempotency_key, v.created_at, v.updated_at FROM videos AS v LEFT JOIN video_stat AS vs ON vs.video_id = v.id WHERE v.id = $1 AND v.status = $2 LIMIT $3`)).
 		WithArgs(1, domainvideo.StatusPublished, 1).
 		WillReturnError(gorm.ErrRecordNotFound)
 

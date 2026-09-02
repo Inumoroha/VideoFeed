@@ -113,7 +113,7 @@ func TestListTimelineFeedAppliesCursor(t *testing.T) {
 	}
 }
 
-const timelineQueryPattern = `(?s)SELECT .*video_id.*COALESCE\(u\.nickname, ''\).*COALESCE\(u\.avatar_url, ''\).*v\.media_url.*v\.cover_url.*v\.like_count.*v\.comment_count.*v\.favorite_count.*v\.published_at.*FROM videos AS v LEFT JOIN users AS u ON u\.id = v\.author_id WHERE .*v\.status = \$[0-9]+.*v\.published_at IS NOT NULL.*ORDER BY v\.published_at DESC,v\.id DESC LIMIT \$[0-9]+`
+const timelineQueryPattern = `(?s)SELECT .*video_id.*COALESCE\(u\.nickname, ''\).*COALESCE\(u\.avatar_url, ''\).*v\.media_url.*v\.cover_url.*COALESCE\(vs\.like_count, 0\).*COALESCE\(vs\.comment_count, 0\).*COALESCE\(vs\.favorite_count, 0\).*v\.published_at.*FROM videos AS v LEFT JOIN users AS u ON u\.id = v\.author_id LEFT JOIN video_stat AS vs ON vs\.video_id = v\.id WHERE .*v\.status = \$[0-9]+.*v\.published_at IS NOT NULL.*ORDER BY v\.published_at DESC,v\.id DESC LIMIT \$[0-9]+`
 
 // newMockRepository 创建使用 PostgreSQL SQL mock 的信息流仓储。
 func newMockRepository(t *testing.T) (*Repository, sqlmock.Sqlmock) {

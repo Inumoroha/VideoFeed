@@ -50,4 +50,4 @@
 
 ## 3. 数据来源
 
-信息流仓储读取 `videos` 表，并通过 `author_id` 关联 `users` 表获取作者昵称和头像。仅返回 `status` 为已发布且 `published_at` 不为空的视频，不额外维护信息流专用数据表。
+信息流仓储读取 `videos` 表，通过 `author_id` 关联 `users` 表获取作者昵称和头像，并通过 `video_id` 关联 `video_stat` 表获取互动统计。仅返回 `status` 为已发布且 `published_at` 不为空的视频，不额外维护信息流专用数据表。
