@@ -19,6 +19,24 @@ func (ActionModel) TableName() string {
 	return "interaction_action"
 }
 
+// ActionIdempotencyModel 保存点赞或收藏请求的首次执行结果，用于幂等重试。
+type ActionIdempotencyModel struct {
+	ID             int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	UserID         int64     `gorm:"column:user_id;not null;uniqueIndex:uk_user_action_idempotency,priority:1"`
+	ActionType     string    `gorm:"column:action_type;size:16;not null;uniqueIndex:uk_user_action_idempotency,priority:2"`
+	IdempotencyKey string    `gorm:"column:idempotency_key;size:128;not null;uniqueIndex:uk_user_action_idempotency,priority:3"`
+	VideoID        int64     `gorm:"column:video_id;not null"`
+	Active         bool      `gorm:"column:active;not null"`
+	LikeCount      int       `gorm:"column:like_count;not null"`
+	FavoriteCount  int       `gorm:"column:favorite_count;not null"`
+	CreatedAt      time.Time `gorm:"column:created_at;autoCreateTime"`
+}
+
+// TableName 返回互动动作幂等记录对应的数据表名称。
+func (ActionIdempotencyModel) TableName() string {
+	return "interaction_action_idempotency"
+}
+
 // CommentModel 表示 interaction_comment 表中的评论记录。
 type CommentModel struct {
 	ID             int64     `gorm:"column:id;primaryKey;autoIncrement"`

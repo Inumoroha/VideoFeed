@@ -2,6 +2,9 @@ openapi: 3.0.3
 info:
   title: Video Feed API
   version: 1.0.0
+servers:
+  - url: /
+    description: Current API server
 paths:
   /health:
     get:
@@ -373,7 +376,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/InteractionIdempotencyKey'
       requestBody:
         required: true
         content:
@@ -392,7 +395,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
-          $ref: '#/components/responses/VideoNotFound'
+          $ref: '#/components/responses/InteractionResourceNotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/interactions/favorite:
@@ -404,7 +407,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/InteractionIdempotencyKey'
       requestBody:
         required: true
         content:
@@ -423,7 +426,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
-          $ref: '#/components/responses/VideoNotFound'
+          $ref: '#/components/responses/InteractionResourceNotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/comments:
@@ -493,7 +496,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
-          $ref: '#/components/responses/VideoNotFound'
+          $ref: '#/components/responses/InteractionResourceNotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/comments/{commentId}:
@@ -574,6 +577,14 @@ components:
         type: string
         maxLength: 128
       description: Optional key used to safely retry the same request.
+    InteractionIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 128
+      description: Optional key that returns the first action state and counter snapshot when a like or favorite request is retried.
     VideoLimit:
       name: limit
       in: query
@@ -1115,6 +1126,14 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
           example:
             error: video not found
+    InteractionResourceNotFound:
+      description: The requested interaction resource was not found or is unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: resource not found
     VideoPermissionDenied:
       description: The current user does not own the video
       content:

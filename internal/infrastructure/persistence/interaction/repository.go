@@ -39,24 +39,24 @@ func New(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
 
-// ToggleAction 切换用户对已发布视频的点赞或收藏状态，并原子更新对应统计。
-func (r *Repository) ToggleAction(ctx context.Context, userID int64, videoID int64, actionType string, idempotencyKey string) (*domaininteraction.Action, int, error) {
+// ToggleAction 切换用户对已发布视频的点赞或收藏状态，并持久化首次幂等结果和统计快照。
+func (r *Repository) ToggleAction(ctx context.Context, userID int64, videoID int64, actionType string, idempotencyKey string) (*domaininteraction.Action, int, int, error) {
 	if err := r.validateRepository(); err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	if userID <= 0 {
-		return nil, 0, domaininteraction.ErrInvalidUserID
+		return nil, 0, 0, domaininteraction.ErrInvalidUserID
 	}
 	if videoID <= 0 {
-		return nil, 0, domaininteraction.ErrInvalidVideoID
+		return nil, 0, 0, domaininteraction.ErrInvalidVideoID
 	}
 	var err error
 	actionType, err = domaininteraction.NormalizeActionType(actionType)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	if len(strings.TrimSpace(idempotencyKey)) > domaininteraction.MaxIdempotencyKeyLength {
-		return nil, 0, domaininteraction.ErrIdempotencyKeyTooLong
+		return nil, 0, 0, domaininteraction.ErrIdempotencyKeyTooLong
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -64,8 +64,31 @@ func (r *Repository) ToggleAction(ctx context.Context, userID int64, videoID int
 
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
 	var action ActionModel
-	var count int
+	var likeCount int
+	var favoriteCount int
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if idempotencyKey != "" {
+			var idempotency ActionIdempotencyModel
+			lookupErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("user_id = ? AND action_type = ? AND idempotency_key = ?", userID, actionType, idempotencyKey).
+				Take(&idempotency).Error
+			if lookupErr == nil {
+				action = ActionModel{
+					UserID:         userID,
+					VideoID:        idempotency.VideoID,
+					ActionType:     actionType,
+					Status:         actionStatusFromActive(idempotency.Active),
+					IdempotencyKey: idempotencyKeyPtr(idempotencyKey),
+				}
+				likeCount = idempotency.LikeCount
+				favoriteCount = idempotency.FavoriteCount
+				return nil
+			}
+			if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+				return lookupErr
+			}
+		}
+
 		if err := lockPublishedVideo(tx, videoID); err != nil {
 			return err
 		}
@@ -90,10 +113,6 @@ func (r *Repository) ToggleAction(ctx context.Context, userID int64, videoID int
 				return err
 			}
 		} else {
-			if idempotencyKey != "" && idempotencyKeyValue(action.IdempotencyKey) == idempotencyKey {
-				count, err = currentActionCount(tx, videoID, actionType)
-				return err
-			}
 			if action.Status == domaininteraction.ActionStatusActive {
 				action.Status = domaininteraction.ActionStatusCanceled
 				delta = -1
@@ -106,17 +125,39 @@ func (r *Repository) ToggleAction(ctx context.Context, userID int64, videoID int
 			}
 		}
 
-		count, err = updateActionStat(tx, videoID, actionType, delta)
-		return err
+		if _, err = updateActionStat(tx, videoID, actionType, delta); err != nil {
+			return err
+		}
+		var stat infravideo.VideoStatModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("video_id = ?", videoID).Take(&stat).Error; err != nil {
+			return err
+		}
+		likeCount = stat.LikeCount
+		favoriteCount = stat.FavoriteCount
+		if idempotencyKey == "" {
+			return nil
+		}
+		return tx.Create(&ActionIdempotencyModel{
+			UserID:         userID,
+			ActionType:     actionType,
+			IdempotencyKey: idempotencyKey,
+			VideoID:        action.VideoID,
+			Active:         action.Status == domaininteraction.ActionStatusActive,
+			LikeCount:      likeCount,
+			FavoriteCount:  favoriteCount,
+		}).Error
 	})
 	if err != nil {
-		return nil, 0, mapVideoError(err)
+		if idempotencyKey != "" && isDuplicateKeyError(err) {
+			return r.loadActionIdempotencyResult(ctx, userID, actionType, idempotencyKey)
+		}
+		return nil, 0, 0, mapVideoError(err)
 	}
 	result, err := restoreAction(action)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
-	return result, count, nil
+	return result, likeCount, favoriteCount, nil
 }
 
 // GetActionCounts 返回视频当前的点赞数和收藏数。
@@ -397,15 +438,22 @@ func updateActionStat(tx *gorm.DB, videoID int64, actionType string, delta int) 
 	return 0, domaininteraction.ErrInvalidActionType
 }
 
-// currentActionCount 返回指定动作类型的当前统计数量。
-func currentActionCount(tx *gorm.DB, videoID int64, actionType string) (int, error) {
-	if actionType == domaininteraction.ActionTypeLike {
-		return currentVideoStatCounter(tx, videoID, "like_count")
+// loadActionIdempotencyResult 读取并恢复已提交的互动动作幂等结果。
+func (r *Repository) loadActionIdempotencyResult(ctx context.Context, userID int64, actionType string, idempotencyKey string) (*domaininteraction.Action, int, int, error) {
+	var idempotency ActionIdempotencyModel
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND action_type = ? AND idempotency_key = ?", userID, actionType, idempotencyKey).
+		Take(&idempotency).Error
+	if err != nil {
+		return nil, 0, 0, err
 	}
-	if actionType == domaininteraction.ActionTypeFavorite {
-		return currentVideoStatCounter(tx, videoID, "favorite_count")
-	}
-	return 0, domaininteraction.ErrInvalidActionType
+	return &domaininteraction.Action{
+		UserID:         userID,
+		VideoID:        idempotency.VideoID,
+		ActionType:     actionType,
+		Status:         actionStatusFromActive(idempotency.Active),
+		IdempotencyKey: idempotencyKey,
+	}, idempotency.LikeCount, idempotency.FavoriteCount, nil
 }
 
 // updateVideoStatCounter 在锁定统计记录后更新指定计数，并防止计数低于零。
@@ -461,6 +509,14 @@ func clampCount(value int) int {
 		return 0
 	}
 	return value
+}
+
+// actionStatusFromActive 将互动是否生效转换为对应的状态枚举值。
+func actionStatusFromActive(active bool) int {
+	if active {
+		return domaininteraction.ActionStatusActive
+	}
+	return domaininteraction.ActionStatusCanceled
 }
 
 // restoreAction 将动作持久化记录转换为领域对象。

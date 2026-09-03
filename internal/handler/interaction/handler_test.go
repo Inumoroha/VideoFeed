@@ -25,13 +25,8 @@ type interactionHandlerRepository struct {
 }
 
 // ToggleAction 返回预设的互动动作。
-func (r *interactionHandlerRepository) ToggleAction(context.Context, int64, int64, string, string) (*domaininteraction.Action, int, error) {
-	return r.action, r.likeCount, nil
-}
-
-// GetActionCounts 返回预设的点赞和收藏统计。
-func (r *interactionHandlerRepository) GetActionCounts(context.Context, int64) (int, int, error) {
-	return r.likeCount, r.favoriteCount, nil
+func (r *interactionHandlerRepository) ToggleAction(context.Context, int64, int64, string, string) (*domaininteraction.Action, int, int, error) {
+	return r.action, r.likeCount, r.favoriteCount, nil
 }
 
 // CreateComment 返回传入的评论对象。

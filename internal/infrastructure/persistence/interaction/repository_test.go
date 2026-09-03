@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	domaininteraction "github.com/inumoroha/video-feed/internal/domain/interaction"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -27,7 +31,7 @@ func TestInteractionModelsUsePostgresCompatibleStatusType(t *testing.T) {
 // TestRepositoryRejectsUninitializedRepository 验证未初始化仓储不会触发空指针异常。
 func TestRepositoryRejectsUninitializedRepository(t *testing.T) {
 	var repository *Repository
-	if _, _, err := repository.ToggleAction(context.Background(), 1, 1, domaininteraction.ActionTypeLike, ""); err == nil || err.Error() != "interaction repository is not initialized" {
+	if _, _, _, err := repository.ToggleAction(context.Background(), 1, 1, domaininteraction.ActionTypeLike, ""); err == nil || err.Error() != "interaction repository is not initialized" {
 		t.Fatalf("ToggleAction() error = %v, want uninitialized repository error", err)
 	}
 	if _, err := repository.FindCommentByID(context.Background(), 1); err == nil || err.Error() != "interaction repository is not initialized" {
@@ -39,7 +43,7 @@ func TestRepositoryRejectsUninitializedRepository(t *testing.T) {
 func TestRepositoryRejectsInvalidInput(t *testing.T) {
 	repository := New(&gorm.DB{})
 
-	if _, _, err := repository.ToggleAction(context.Background(), 0, 1, domaininteraction.ActionTypeLike, ""); !errors.Is(err, domaininteraction.ErrInvalidUserID) {
+	if _, _, _, err := repository.ToggleAction(context.Background(), 0, 1, domaininteraction.ActionTypeLike, ""); !errors.Is(err, domaininteraction.ErrInvalidUserID) {
 		t.Fatalf("ToggleAction() error = %v, want %v", err, domaininteraction.ErrInvalidUserID)
 	}
 	if _, err := repository.FindCommentByID(context.Background(), 0); !errors.Is(err, domaininteraction.ErrInvalidCommentID) {
@@ -67,4 +71,48 @@ func TestValidateCommentCountsUnicodeCharacters(t *testing.T) {
 	if !errors.Is(validateComment(comment), domaininteraction.ErrCommentContentTooLong) {
 		t.Fatalf("validateComment() error = %v, want %v", validateComment(comment), domaininteraction.ErrCommentContentTooLong)
 	}
+}
+
+// TestToggleActionReturnsStoredIdempotencySnapshot 验证相同幂等键重试返回首次执行的动作状态和统计快照。
+func TestToggleActionReturnsStoredIdempotencySnapshot(t *testing.T) {
+	repository, mock := newInteractionMockRepository(t)
+	createdAt := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "interaction_action_idempotency" WHERE user_id = $1 AND action_type = $2 AND idempotency_key = $3 LIMIT $4 FOR UPDATE`)).
+		WithArgs(int64(7), domaininteraction.ActionTypeLike, "like-request-1", 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "user_id", "action_type", "idempotency_key", "video_id", "active", "like_count", "favorite_count", "created_at",
+		}).AddRow(1, 7, domaininteraction.ActionTypeLike, "like-request-1", 3, true, 8, 5, createdAt))
+	mock.ExpectCommit()
+
+	action, likeCount, favoriteCount, err := repository.ToggleAction(context.Background(), 7, 3, domaininteraction.ActionTypeLike, "like-request-1")
+	if err != nil {
+		t.Fatalf("ToggleAction() error = %v", err)
+	}
+	if action == nil || !action.Active() || action.VideoID != 3 {
+		t.Fatalf("ToggleAction() action = %#v, want active action for video 3", action)
+	}
+	if likeCount != 8 || favoriteCount != 5 {
+		t.Fatalf("ToggleAction() counts = (%d, %d), want (8, 5)", likeCount, favoriteCount)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations = %v", err)
+	}
+}
+
+// newInteractionMockRepository 创建使用 PostgreSQL SQL mock 的互动仓储。
+func newInteractionMockRepository(t *testing.T) (*Repository, sqlmock.Sqlmock) {
+	t.Helper()
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+	})
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{TranslateError: true})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+	return New(db), mock
 }

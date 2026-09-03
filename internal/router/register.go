@@ -48,7 +48,7 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	if err := gormDB.AutoMigrate(&videopersistence.VideoStatModel{}); err != nil {
 		return fmt.Errorf("migrate video stats: %w", err)
 	}
-	if err := gormDB.AutoMigrate(&interactionpersistence.ActionModel{}, &interactionpersistence.CommentModel{}); err != nil {
+	if err := gormDB.AutoMigrate(&interactionpersistence.ActionModel{}, &interactionpersistence.ActionIdempotencyModel{}, &interactionpersistence.CommentModel{}); err != nil {
 		return fmt.Errorf("migrate interactions: %w", err)
 	}
 	if err := videopersistence.EnsureStats(gormDB); err != nil {

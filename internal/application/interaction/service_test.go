@@ -17,7 +17,6 @@ type interactionServiceRepository struct {
 	listLimit      int
 	listComments   []*domaininteraction.Comment
 	toggleAction   *domaininteraction.Action
-	toggleCount    int
 	toggleErr      error
 	likeCount      int
 	favoriteCount  int
@@ -28,13 +27,8 @@ type interactionServiceRepository struct {
 }
 
 // ToggleAction 返回预设的互动动作结果。
-func (r *interactionServiceRepository) ToggleAction(context.Context, int64, int64, string, string) (*domaininteraction.Action, int, error) {
-	return r.toggleAction, r.toggleCount, r.toggleErr
-}
-
-// GetActionCounts 返回预设的视频点赞和收藏统计。
-func (r *interactionServiceRepository) GetActionCounts(context.Context, int64) (int, int, error) {
-	return r.likeCount, r.favoriteCount, nil
+func (r *interactionServiceRepository) ToggleAction(context.Context, int64, int64, string, string) (*domaininteraction.Action, int, int, error) {
+	return r.toggleAction, r.likeCount, r.favoriteCount, r.toggleErr
 }
 
 // CreateComment 返回预设的评论创建结果。
