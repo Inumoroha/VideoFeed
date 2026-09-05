@@ -11,6 +11,7 @@ import (
 	domainuser "github.com/inumoroha/video-feed/internal/domain/user"
 	domainvideo "github.com/inumoroha/video-feed/internal/domain/video"
 	infravideo "github.com/inumoroha/video-feed/internal/infrastructure/persistence/video"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -39,8 +40,18 @@ func New(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
 
-// ToggleAction 切换用户对已发布视频的点赞或收藏状态，并持久化首次幂等结果和统计快照。
+// SetAction 设置用户对已发布视频的点赞或收藏状态，并持久化首次幂等结果和统计快照。
+func (r *Repository) SetAction(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string) (*domaininteraction.Action, int, int, error) {
+	return r.applyAction(ctx, userID, videoID, actionType, &active, idempotencyKey)
+}
+
+// ToggleAction 兼容旧的切换式调用，并复用显式状态写入的事务逻辑。
 func (r *Repository) ToggleAction(ctx context.Context, userID int64, videoID int64, actionType string, idempotencyKey string) (*domaininteraction.Action, int, int, error) {
+	return r.applyAction(ctx, userID, videoID, actionType, nil, idempotencyKey)
+}
+
+// applyAction 在事务中设置或切换互动状态；targetActive 为空时按当前状态切换。
+func (r *Repository) applyAction(ctx context.Context, userID int64, videoID int64, actionType string, targetActive *bool, idempotencyKey string) (*domaininteraction.Action, int, int, error) {
 	if err := r.validateRepository(); err != nil {
 		return nil, 0, 0, err
 	}
@@ -100,37 +111,62 @@ func (r *Repository) ToggleAction(ctx context.Context, userID int64, videoID int
 			return findErr
 		}
 
-		delta := 1
+		delta := 0
 		if errors.Is(findErr, gorm.ErrRecordNotFound) {
+			nextActive := true
+			if targetActive != nil {
+				nextActive = *targetActive
+			}
 			action = ActionModel{
 				UserID:         userID,
 				VideoID:        videoID,
 				ActionType:     actionType,
-				Status:         domaininteraction.ActionStatusActive,
+				Status:         actionStatusFromActive(nextActive),
 				IdempotencyKey: idempotencyKeyPtr(idempotencyKey),
 			}
 			if err := tx.Create(&action).Error; err != nil {
 				return err
 			}
-		} else {
-			if action.Status == domaininteraction.ActionStatusActive {
-				action.Status = domaininteraction.ActionStatusCanceled
-				delta = -1
-			} else {
-				action.Status = domaininteraction.ActionStatusActive
+			if nextActive {
+				delta = 1
 			}
-			action.IdempotencyKey = idempotencyKeyPtr(idempotencyKey)
-			if err := tx.Save(&action).Error; err != nil {
-				return err
+		} else {
+			previousStatus := action.Status
+			previousIdempotencyKey := idempotencyKeyValue(action.IdempotencyKey)
+			if idempotencyKey != "" && previousIdempotencyKey == idempotencyKey {
+				// 历史数据可能没有对应的幂等快照，仍需保持同键请求不重复变更。
+				delta = 0
+			} else {
+				nextActive := action.Status != domaininteraction.ActionStatusActive
+				if targetActive != nil {
+					nextActive = *targetActive
+				}
+				nextStatus := actionStatusFromActive(nextActive)
+				if action.Status != nextStatus {
+					if nextActive {
+						delta = 1
+					} else {
+						delta = -1
+					}
+					action.Status = nextStatus
+				}
+				action.IdempotencyKey = idempotencyKeyPtr(idempotencyKey)
+				if previousStatus != nextStatus || previousIdempotencyKey != idempotencyKey {
+					if err := tx.Save(&action).Error; err != nil {
+						return err
+					}
+				}
 			}
 		}
 
-		if _, err = updateActionStat(tx, videoID, actionType, delta); err != nil {
-			return err
+		if delta != 0 {
+			if _, err = updateActionStat(tx, videoID, actionType, delta); err != nil {
+				return err
+			}
 		}
 		var stat infravideo.VideoStatModel
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("video_id = ?", videoID).Take(&stat).Error; err != nil {
-			return err
+			return mapVideoError(err)
 		}
 		likeCount = stat.LikeCount
 		favoriteCount = stat.FavoriteCount
@@ -158,6 +194,14 @@ func (r *Repository) ToggleAction(ctx context.Context, userID int64, videoID int
 		return nil, 0, 0, err
 	}
 	return result, likeCount, favoriteCount, nil
+}
+
+// actionStatusFromActive 将布尔值转换为互动状态。
+func actionStatusFromActive(active bool) int {
+	if active {
+		return domaininteraction.ActionStatusActive
+	}
+	return domaininteraction.ActionStatusCanceled
 }
 
 // GetActionCounts 返回视频当前的点赞数和收藏数。
@@ -191,6 +235,7 @@ func (r *Repository) CreateComment(ctx context.Context, comment *domaininteracti
 		ctx = context.Background()
 	}
 
+	idempotencyKey := strings.TrimSpace(comment.IdempotencyKey)
 	var model CommentModel
 	var count int
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -203,7 +248,7 @@ func (r *Repository) CreateComment(ctx context.Context, comment *domaininteracti
 			UserID:         comment.UserID,
 			Content:        strings.TrimSpace(comment.Content),
 			Status:         domaininteraction.CommentStatusNormal,
-			IdempotencyKey: idempotencyKeyPtr(comment.IdempotencyKey),
+			IdempotencyKey: idempotencyKeyPtr(idempotencyKey),
 		}
 		if err := tx.Create(&model).Error; err != nil {
 			return err
@@ -214,8 +259,8 @@ func (r *Repository) CreateComment(ctx context.Context, comment *domaininteracti
 		return statErr
 	})
 	if err != nil {
-		if comment.IdempotencyKey != "" && isDuplicateKeyError(err) {
-			existing, existingCount, loadErr := r.FindCommentByUserAndIdempotencyKey(ctx, comment.UserID, comment.IdempotencyKey)
+		if idempotencyKey != "" && isDuplicateKeyError(err) {
+			existing, existingCount, loadErr := r.FindCommentByUserAndIdempotencyKey(ctx, comment.UserID, idempotencyKey)
 			if loadErr == nil {
 				return existing, existingCount, nil
 			}
@@ -511,14 +556,6 @@ func clampCount(value int) int {
 	return value
 }
 
-// actionStatusFromActive 将互动是否生效转换为对应的状态枚举值。
-func actionStatusFromActive(active bool) int {
-	if active {
-		return domaininteraction.ActionStatusActive
-	}
-	return domaininteraction.ActionStatusCanceled
-}
-
 // restoreAction 将动作持久化记录转换为领域对象。
 func restoreAction(model ActionModel) (*domaininteraction.Action, error) {
 	return domaininteraction.RestoreAction(
@@ -615,7 +652,11 @@ func mapVideoError(err error) error {
 
 // isDuplicateKeyError 判断错误是否为 GORM 转换后的唯一键冲突。
 func isDuplicateKeyError(err error) bool {
-	return errors.Is(err, gorm.ErrDuplicatedKey)
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	var postgresErr *pgconn.PgError
+	return errors.As(err, &postgresErr) && postgresErr.Code == "23505"
 }
 
 var _ domaininteraction.Repository = (*Repository)(nil)

@@ -31,8 +31,8 @@ func TestInteractionModelsUsePostgresCompatibleStatusType(t *testing.T) {
 // TestRepositoryRejectsUninitializedRepository 验证未初始化仓储不会触发空指针异常。
 func TestRepositoryRejectsUninitializedRepository(t *testing.T) {
 	var repository *Repository
-	if _, _, _, err := repository.ToggleAction(context.Background(), 1, 1, domaininteraction.ActionTypeLike, ""); err == nil || err.Error() != "interaction repository is not initialized" {
-		t.Fatalf("ToggleAction() error = %v, want uninitialized repository error", err)
+	if _, _, _, err := repository.SetAction(context.Background(), 1, 1, domaininteraction.ActionTypeLike, true, ""); err == nil || err.Error() != "interaction repository is not initialized" {
+		t.Fatalf("SetAction() error = %v, want uninitialized repository error", err)
 	}
 	if _, err := repository.FindCommentByID(context.Background(), 1); err == nil || err.Error() != "interaction repository is not initialized" {
 		t.Fatalf("FindCommentByID() error = %v, want uninitialized repository error", err)
@@ -43,8 +43,8 @@ func TestRepositoryRejectsUninitializedRepository(t *testing.T) {
 func TestRepositoryRejectsInvalidInput(t *testing.T) {
 	repository := New(&gorm.DB{})
 
-	if _, _, _, err := repository.ToggleAction(context.Background(), 0, 1, domaininteraction.ActionTypeLike, ""); !errors.Is(err, domaininteraction.ErrInvalidUserID) {
-		t.Fatalf("ToggleAction() error = %v, want %v", err, domaininteraction.ErrInvalidUserID)
+	if _, _, _, err := repository.SetAction(context.Background(), 0, 1, domaininteraction.ActionTypeLike, true, ""); !errors.Is(err, domaininteraction.ErrInvalidUserID) {
+		t.Fatalf("SetAction() error = %v, want %v", err, domaininteraction.ErrInvalidUserID)
 	}
 	if _, err := repository.FindCommentByID(context.Background(), 0); !errors.Is(err, domaininteraction.ErrInvalidCommentID) {
 		t.Fatalf("FindCommentByID() error = %v, want %v", err, domaininteraction.ErrInvalidCommentID)
@@ -73,8 +73,8 @@ func TestValidateCommentCountsUnicodeCharacters(t *testing.T) {
 	}
 }
 
-// TestToggleActionReturnsStoredIdempotencySnapshot 验证相同幂等键重试返回首次执行的动作状态和统计快照。
-func TestToggleActionReturnsStoredIdempotencySnapshot(t *testing.T) {
+// TestSetActionReturnsStoredIdempotencySnapshot 验证相同幂等键重试返回首次执行的动作状态和统计快照。
+func TestSetActionReturnsStoredIdempotencySnapshot(t *testing.T) {
 	repository, mock := newInteractionMockRepository(t)
 	createdAt := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 	mock.ExpectBegin()
@@ -85,15 +85,15 @@ func TestToggleActionReturnsStoredIdempotencySnapshot(t *testing.T) {
 		}).AddRow(1, 7, domaininteraction.ActionTypeLike, "like-request-1", 3, true, 8, 5, createdAt))
 	mock.ExpectCommit()
 
-	action, likeCount, favoriteCount, err := repository.ToggleAction(context.Background(), 7, 3, domaininteraction.ActionTypeLike, "like-request-1")
+	action, likeCount, favoriteCount, err := repository.SetAction(context.Background(), 7, 3, domaininteraction.ActionTypeLike, true, "like-request-1")
 	if err != nil {
-		t.Fatalf("ToggleAction() error = %v", err)
+		t.Fatalf("SetAction() error = %v", err)
 	}
 	if action == nil || !action.Active() || action.VideoID != 3 {
-		t.Fatalf("ToggleAction() action = %#v, want active action for video 3", action)
+		t.Fatalf("SetAction() action = %#v, want active action for video 3", action)
 	}
 	if likeCount != 8 || favoriteCount != 5 {
-		t.Fatalf("ToggleAction() counts = (%d, %d), want (8, 5)", likeCount, favoriteCount)
+		t.Fatalf("SetAction() counts = (%d, %d), want (8, 5)", likeCount, favoriteCount)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("SQL expectations = %v", err)
