@@ -2,19 +2,13 @@ package interaction
 
 import "time"
 
-// toggleActionRequest 表示点赞或收藏请求体。
-type toggleActionRequest struct {
-	VideoID int64 `json:"video_id"`
-}
-
 // createCommentRequest 表示创建评论请求体。
 type createCommentRequest struct {
-	VideoID int64  `json:"video_id"`
 	Content string `json:"content"`
 }
 
-// toggleActionResponse 表示点赞或收藏操作的响应数据。
-type toggleActionResponse struct {
+// actionResponse 表示点赞或收藏操作的响应数据。
+type actionResponse struct {
 	VideoID       int64  `json:"video_id"`
 	ActionType    string `json:"action_type"`
 	Active        bool   `json:"active"`

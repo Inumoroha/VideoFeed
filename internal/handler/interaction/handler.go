@@ -22,64 +22,24 @@ func NewHandler(service *applicationinteraction.Service) *Handler {
 	return &Handler{service: service}
 }
 
-// ToggleLike 切换当前用户对视频的点赞状态并返回最新互动统计。
-func (h *Handler) ToggleLike(c *gin.Context) {
-	if h == nil || h.service == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-		return
-	}
-	userID, ok := userIDFromContext(c)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
-		return
-	}
-
-	var req toggleActionRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
-		return
-	}
-
-	result, err := h.service.ToggleLike(c.Request.Context(), userID, req.VideoID, c.GetHeader("Idempotency-Key"))
-	if err != nil {
-		writeInteractionError(c, err)
-		return
-	}
-	if result == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-		return
-	}
-	c.JSON(http.StatusOK, toggleActionResponseFromResult(result))
+// Like 设置当前用户对指定视频的点赞状态。
+func (h *Handler) Like(c *gin.Context) {
+	h.setLike(c, true)
 }
 
-// ToggleFavorite 切换当前用户对视频的收藏状态并返回最新互动统计。
-func (h *Handler) ToggleFavorite(c *gin.Context) {
-	if h == nil || h.service == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-		return
-	}
-	userID, ok := userIDFromContext(c)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
-		return
-	}
+// Unlike 取消点赞并返回最新点赞统计。
+func (h *Handler) Unlike(c *gin.Context) {
+	h.setLike(c, false)
+}
 
-	var req toggleActionRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
-		return
-	}
+// Favorite 收藏视频并返回最新收藏统计。
+func (h *Handler) Favorite(c *gin.Context) {
+	h.setFavorite(c, true)
+}
 
-	result, err := h.service.ToggleFavorite(c.Request.Context(), userID, req.VideoID, c.GetHeader("Idempotency-Key"))
-	if err != nil {
-		writeInteractionError(c, err)
-		return
-	}
-	if result == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
-		return
-	}
-	c.JSON(http.StatusOK, toggleActionResponseFromResult(result))
+// Unfavorite 取消收藏视频并返回最新收藏统计。
+func (h *Handler) Unfavorite(c *gin.Context) {
+	h.setFavorite(c, false)
 }
 
 // CreateComment 创建评论并返回评论内容及视频评论统计。
@@ -94,13 +54,19 @@ func (h *Handler) CreateComment(c *gin.Context) {
 		return
 	}
 
+	videoID, err := parsePositiveInt64(c.Param("videoId"), domaininteraction.ErrInvalidVideoID)
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+
 	var req createCommentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
 
-	result, err := h.service.CreateComment(c.Request.Context(), userID, req.VideoID, req.Content, c.GetHeader("Idempotency-Key"))
+	result, err := h.service.CreateComment(c.Request.Context(), userID, videoID, req.Content, c.GetHeader("Idempotency-Key"))
 	if err != nil {
 		writeInteractionError(c, err)
 		return
@@ -118,7 +84,8 @@ func (h *Handler) ListComments(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 		return
 	}
-	videoID, err := parsePositiveInt64(c.Query("video_id"), domaininteraction.ErrInvalidVideoID)
+
+	videoID, err := parsePositiveInt64(c.Param("videoId"), domaininteraction.ErrInvalidVideoID)
 	if err != nil {
 		writeInteractionError(c, err)
 		return
@@ -177,6 +144,76 @@ func (h *Handler) DeleteComment(c *gin.Context) {
 	})
 }
 
+// setLike 设置当前用户对指定视频的点赞状态，并返回最新互动统计。
+func (h *Handler) setLike(c *gin.Context, active bool) {
+	if h == nil || h.service == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		return
+	}
+
+	videoID, err := parsePositiveInt64(c.Param("videoId"), domaininteraction.ErrInvalidVideoID)
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+
+	var result *applicationinteraction.ActionResult
+	if active {
+		result, err = h.service.Like(c.Request.Context(), userID, videoID, c.GetHeader("Idempotency-Key"))
+	} else {
+		result, err = h.service.Unlike(c.Request.Context(), userID, videoID, c.GetHeader("Idempotency-Key"))
+	}
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+	if result == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+	c.JSON(http.StatusOK, actionResponseFromResult(result))
+}
+
+// setFavorite 将视频收藏或取消收藏，并返回最新收藏统计。
+func (h *Handler) setFavorite(c *gin.Context, active bool) {
+	if h == nil || h.service == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		return
+	}
+
+	videoID, err := parsePositiveInt64(c.Param("videoId"), domaininteraction.ErrInvalidVideoID)
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+
+	var result *applicationinteraction.ActionResult
+	if active {
+		result, err = h.service.Favorite(c.Request.Context(), userID, videoID, c.GetHeader("Idempotency-Key"))
+	} else {
+		result, err = h.service.Unfavorite(c.Request.Context(), userID, videoID, c.GetHeader("Idempotency-Key"))
+	}
+	if err != nil {
+		writeInteractionError(c, err)
+		return
+	}
+	if result == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+	c.JSON(http.StatusOK, actionResponseFromResult(result))
+}
+
 // userIDFromContext 读取认证中间件写入的正数用户 ID。
 func userIDFromContext(c *gin.Context) (int64, bool) {
 	value, exists := c.Get(middleware.ContextUserIDKey)
@@ -219,12 +256,12 @@ func parseLimit(raw string) (int, error) {
 	return limit, nil
 }
 
-// toggleActionResponseFromResult 将互动应用结果转换为 HTTP 响应。
-func toggleActionResponseFromResult(result *applicationinteraction.ToggleActionResult) toggleActionResponse {
+// actionResponseFromResult 将互动应用结果转换为 HTTP 响应。
+func actionResponseFromResult(result *applicationinteraction.ActionResult) actionResponse {
 	if result == nil {
-		return toggleActionResponse{}
+		return actionResponse{}
 	}
-	return toggleActionResponse{
+	return actionResponse{
 		VideoID:       result.VideoID,
 		ActionType:    result.ActionType,
 		Active:        result.Active,
