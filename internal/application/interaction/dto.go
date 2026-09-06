@@ -2,8 +2,8 @@ package interaction
 
 import domaininteraction "github.com/inumoroha/video-feed/internal/domain/interaction"
 
-// ToggleActionResult 表示点赞或收藏切换后的动作状态和相关统计。
-type ToggleActionResult struct {
+// ActionResult 表示点赞或收藏设置后的动作状态和相关统计。
+type ActionResult struct {
 	VideoID       int64
 	ActionType    string
 	Active        bool

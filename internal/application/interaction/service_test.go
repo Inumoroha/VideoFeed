@@ -11,24 +11,30 @@ import (
 
 // interactionServiceRepository 是服务测试使用的最小内存仓储。
 type interactionServiceRepository struct {
-	lookupComment  *domaininteraction.Comment
-	lookupErr      error
-	lookupCalls    int
-	listLimit      int
-	listComments   []*domaininteraction.Comment
-	toggleAction   *domaininteraction.Action
-	toggleErr      error
-	likeCount      int
-	favoriteCount  int
-	deleteComment  *domaininteraction.Comment
-	deleteCount    int
-	deleteErr      error
-	createdComment *domaininteraction.Comment
+	lookupComment   *domaininteraction.Comment
+	lookupErr       error
+	lookupCalls     int
+	listLimit       int
+	listComments    []*domaininteraction.Comment
+	action          *domaininteraction.Action
+	actionErr       error
+	likeCount       int
+	favoriteCount   int
+	setActionCalls  int
+	setActionActive bool
+	setActionType   string
+	deleteComment   *domaininteraction.Comment
+	deleteCount     int
+	deleteErr       error
+	createdComment  *domaininteraction.Comment
 }
 
-// ToggleAction 返回预设的互动动作结果。
-func (r *interactionServiceRepository) ToggleAction(context.Context, int64, int64, string, string) (*domaininteraction.Action, int, int, error) {
-	return r.toggleAction, r.likeCount, r.favoriteCount, r.toggleErr
+// SetAction 记录显式互动状态并返回预设的互动动作结果。
+func (r *interactionServiceRepository) SetAction(_ context.Context, _ int64, _ int64, actionType string, active bool, _ string) (*domaininteraction.Action, int, int, error) {
+	r.setActionCalls++
+	r.setActionActive = active
+	r.setActionType = actionType
+	return r.action, r.likeCount, r.favoriteCount, r.actionErr
 }
 
 // CreateComment 返回预设的评论创建结果。
@@ -59,8 +65,8 @@ func (r *interactionServiceRepository) DeleteComment(context.Context, int64, int
 // TestServiceRejectsUninitializedDependencies 验证服务依赖缺失时返回明确错误。
 func TestServiceRejectsUninitializedDependencies(t *testing.T) {
 	var service *Service
-	if _, err := service.ToggleLike(context.Background(), 1, 1, ""); !errors.Is(err, ErrInteractionServiceNotInitialized) {
-		t.Fatalf("ToggleLike() error = %v, want %v", err, ErrInteractionServiceNotInitialized)
+	if _, err := service.Like(context.Background(), 1, 1, ""); !errors.Is(err, ErrInteractionServiceNotInitialized) {
+		t.Fatalf("Like() error = %v, want %v", err, ErrInteractionServiceNotInitialized)
 	}
 	if _, err := NewService(nil).ListComments(context.Background(), 1, "", 0); !errors.Is(err, ErrInteractionServiceNotInitialized) {
 		t.Fatalf("ListComments() error = %v, want %v", err, ErrInteractionServiceNotInitialized)
@@ -98,19 +104,39 @@ func TestListCommentsNormalizesLimit(t *testing.T) {
 	}
 }
 
-// TestToggleLikeReturnsBothActionCounts 验证点赞响应同时包含点赞和收藏统计。
-func TestToggleLikeReturnsBothActionCounts(t *testing.T) {
+// TestLikeReturnsBothActionCounts 验证点赞响应同时包含点赞和收藏统计。
+func TestLikeReturnsBothActionCounts(t *testing.T) {
 	repository := &interactionServiceRepository{
-		toggleAction:  &domaininteraction.Action{VideoID: 3, ActionType: domaininteraction.ActionTypeLike, Status: domaininteraction.ActionStatusActive},
+		action:        &domaininteraction.Action{VideoID: 3, ActionType: domaininteraction.ActionTypeLike, Status: domaininteraction.ActionStatusActive},
 		likeCount:     8,
 		favoriteCount: 5,
 	}
-	result, err := NewService(repository).ToggleLike(context.Background(), 1, 3, "")
+	result, err := NewService(repository).Like(context.Background(), 1, 3, "")
 	if err != nil {
-		t.Fatalf("ToggleLike() error = %v", err)
+		t.Fatalf("Like() error = %v", err)
 	}
 	if result.LikeCount != 8 || result.FavoriteCount != 5 {
-		t.Fatalf("ToggleLike() counts = (%d, %d), want (8, 5)", result.LikeCount, result.FavoriteCount)
+		t.Fatalf("Like() counts = (%d, %d), want (8, 5)", result.LikeCount, result.FavoriteCount)
+	}
+	if repository.setActionCalls != 1 || !repository.setActionActive || repository.setActionType != domaininteraction.ActionTypeLike {
+		t.Fatalf("Like() SetAction call = (calls=%d, active=%t, type=%q), want (1, true, %q)", repository.setActionCalls, repository.setActionActive, repository.setActionType, domaininteraction.ActionTypeLike)
+	}
+}
+
+// TestUnlikePassesInactiveState 验证取消点赞会向仓储传递 active=false。
+func TestUnlikePassesInactiveState(t *testing.T) {
+	repository := &interactionServiceRepository{
+		action: &domaininteraction.Action{VideoID: 3, ActionType: domaininteraction.ActionTypeLike, Status: domaininteraction.ActionStatusCanceled},
+	}
+	result, err := NewService(repository).Unlike(context.Background(), 1, 3, "request-1")
+	if err != nil {
+		t.Fatalf("Unlike() error = %v", err)
+	}
+	if result.Active {
+		t.Fatalf("Unlike() active = %t, want false", result.Active)
+	}
+	if repository.setActionCalls != 1 || repository.setActionActive || repository.setActionType != domaininteraction.ActionTypeLike {
+		t.Fatalf("Unlike() SetAction call = (calls=%d, active=%t, type=%q), want (1, false, %q)", repository.setActionCalls, repository.setActionActive, repository.setActionType, domaininteraction.ActionTypeLike)
 	}
 }
 

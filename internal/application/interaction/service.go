@@ -29,14 +29,24 @@ func NewService(repo domaininteraction.Repository) *Service {
 	return &Service{repo: repo}
 }
 
-// ToggleLike 切换用户对视频的点赞状态并返回最新点赞统计。
-func (s *Service) ToggleLike(ctx context.Context, userID int64, videoID int64, idempotencyKey string) (*ToggleActionResult, error) {
-	return s.toggleAction(ctx, userID, videoID, domaininteraction.ActionTypeLike, idempotencyKey)
+// Like 设置用户对视频为点赞状态并返回最新互动统计。
+func (s *Service) Like(ctx context.Context, userID int64, videoID int64, idempotencyKey string) (*ActionResult, error) {
+	return s.setAction(ctx, userID, videoID, domaininteraction.ActionTypeLike, true, idempotencyKey)
 }
 
-// ToggleFavorite 切换用户对视频的收藏状态并返回最新收藏统计。
-func (s *Service) ToggleFavorite(ctx context.Context, userID int64, videoID int64, idempotencyKey string) (*ToggleActionResult, error) {
-	return s.toggleAction(ctx, userID, videoID, domaininteraction.ActionTypeFavorite, idempotencyKey)
+// Unlike 取消点赞并返回最新点赞统计。
+func (s *Service) Unlike(ctx context.Context, userID int64, videoID int64, idempotencyKey string) (*ActionResult, error) {
+	return s.setAction(ctx, userID, videoID, domaininteraction.ActionTypeLike, false, idempotencyKey)
+}
+
+// Favorite 收藏视频并返回最新收藏统计。
+func (s *Service) Favorite(ctx context.Context, userID int64, videoID int64, idempotencyKey string) (*ActionResult, error) {
+	return s.setAction(ctx, userID, videoID, domaininteraction.ActionTypeFavorite, true, idempotencyKey)
+}
+
+// Unfavorite 取消收藏视频并返回最新收藏统计。
+func (s *Service) Unfavorite(ctx context.Context, userID int64, videoID int64, idempotencyKey string) (*ActionResult, error) {
+	return s.setAction(ctx, userID, videoID, domaininteraction.ActionTypeFavorite, false, idempotencyKey)
 }
 
 // CreateComment 校验参数、处理幂等重试并创建视频评论。
@@ -154,8 +164,8 @@ func (s *Service) DeleteComment(ctx context.Context, commentID int64, userID int
 	}, nil
 }
 
-// toggleAction 执行指定类型的互动切换，并将仓储结果转换为应用结果。
-func (s *Service) toggleAction(ctx context.Context, userID int64, videoID int64, actionType string, idempotencyKey string) (*ToggleActionResult, error) {
+// setAction 将指定类型的互动设置为目标 active 状态，并将仓储结果转换为应用结果。
+func (s *Service) setAction(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string) (*ActionResult, error) {
 	if !s.ready() {
 		return nil, ErrInteractionServiceNotInitialized
 	}
@@ -175,7 +185,7 @@ func (s *Service) toggleAction(ctx context.Context, userID int64, videoID int64,
 		return nil, err
 	}
 
-	action, likeCount, favoriteCount, err := s.repo.ToggleAction(ctx, userID, videoID, actionType, idempotencyKey)
+	action, likeCount, favoriteCount, err := s.repo.SetAction(ctx, userID, videoID, actionType, active, idempotencyKey)
 	if err != nil {
 		if isExpectedDomainError(err) {
 			return nil, err
@@ -185,7 +195,7 @@ func (s *Service) toggleAction(ctx context.Context, userID int64, videoID int64,
 	if action == nil {
 		return nil, ErrUpdateInteractionFailed
 	}
-	result := &ToggleActionResult{
+	result := &ActionResult{
 		VideoID:       action.VideoID,
 		ActionType:    action.ActionType,
 		Active:        action.Active(),
