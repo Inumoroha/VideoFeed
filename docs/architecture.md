@@ -29,7 +29,7 @@ flowchart LR
   Web["Web App<br/>React + Vite"]
   Client["移动端 / API 调用方"]
   API["GCFeed API<br/>Go + Gin"]
-  MySQL[("MySQL<br/>业务数据")]
+  PostgreSQL[("PostgreSQL<br/>业务数据")]
   Uploads[("uploads<br/>视频 / 封面 / 头像")]
   Redis[("Redis<br/>缓存与计数")]
   MQ[("MQ<br/>异步事件")]
@@ -37,7 +37,7 @@ flowchart LR
 
   Web -->|"调用管理与浏览接口"| API
   Client -->|"调用公开 API"| API
-  API -->|"读写 users / videos / video_stat / interaction_*"| MySQL
+  API -->|"读写 users / videos / video_stat / interaction_*"| PostgreSQL
   API -->|"保存和读取本地文件"| Uploads
   API -.->|"缓存 Feed 与计数"| Redis
   API -.->|"投递互动和审核事件"| MQ
@@ -45,7 +45,7 @@ flowchart LR
 
   class Web,Client client;
   class API system;
-  class MySQL,Uploads store;
+  class PostgreSQL,Uploads store;
   class Redis,MQ,ObjectStorage future;
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
 ```
@@ -85,8 +85,8 @@ flowchart LR
   Config["Config Loader<br/>configs/config.yaml"]
   JWT["JWT Manager<br/>签发访问令牌"]
   Repo["GORM Repository<br/>仓储实现"]
-  SQL["database/sql<br/>MySQL 连接"]
-  MySQL[("MySQL")]
+  SQL["GORM / database/sql<br/>PostgreSQL 连接池"]
+  PostgreSQL[("PostgreSQL")]
   Uploads[("uploads 目录")]
 
   Entry -->|"加载配置"| Config
@@ -99,7 +99,7 @@ flowchart LR
   Services -->|"执行领域规则"| Domains
   Services -->|"读写仓储"| Repo
   Repo -->|"复用连接池"| SQL
-  SQL -->|"持久化数据"| MySQL
+  SQL -->|"持久化数据"| PostgreSQL
   Handlers -->|"保存上传文件"| Uploads
   Router -->|"暴露静态文件"| Uploads
 
@@ -108,13 +108,13 @@ flowchart LR
   class Services service;
   class Domains domain;
   class Config,JWT,Repo,SQL infra;
-  class MySQL,Uploads store;
+  class PostgreSQL,Uploads store;
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
 ```
 
 ## 3. 核心请求链路
 
-这张图展示注册、登录、上传、发布、刷 Feed 与互动的核心请求链路。上传、发布和互动请求都需要携带 Bearer JWT。
+这张图展示注册、登录、上传、发布、刷 Feed 与互动的核心请求链路。上传、发布、点赞、收藏、创建评论和删除评论请求都需要携带 Bearer JWT。
 
 ```mermaid
 ---
@@ -139,11 +139,11 @@ sequenceDiagram
   participant H as Handler
   participant S as Service
   participant Repo as GORM Repository
-  participant DB as MySQL
+  participant DB as PostgreSQL
   participant FS as uploads
   participant Auth as JWT Middleware
 
-  C->>R: POST /api/auth/register
+  C->>R: POST /api/users
   R->>H: User.Register
   H->>S: 创建用户
   S->>Repo: Save user
@@ -153,7 +153,7 @@ sequenceDiagram
   S-->>H: 返回 profile
   H-->>C: 201 Created
 
-  C->>R: POST /api/auth/login/password
+  C->>R: POST /api/sessions
   R->>H: User.Login
   H->>S: 校验账号密码
   S->>Repo: FindByAccount
@@ -180,7 +180,7 @@ sequenceDiagram
   S-->>H: 返回视频详情
   H-->>C: 201 Created
 
-  C->>R: GET /api/feed/timeline?cursor=...&limit=...
+  C->>R: GET /api/feed-items?cursor=...&limit=...
   R->>H: Feed.Timeline
   H->>S: GetTimelineFeed
   S->>Repo: ListTimelineFeed
@@ -190,12 +190,13 @@ sequenceDiagram
   S-->>H: 返回 items + next_cursor + has_more
   H-->>C: 返回 Timeline Feed
 
-  C->>R: POST /api/interactions/like (Bearer JWT)
+  Note over C,R: PUT 激活点赞，DELETE 取消点赞；收藏接口语义相同
+  C->>R: PUT /api/videos/{videoId}/like (Bearer JWT)
   R->>Auth: 校验访问令牌
-  Auth->>H: Interaction.ToggleLike（用户上下文）
-  H->>S: 切换点赞状态
-  S->>Repo: 写入互动动作并刷新计数
-  Repo->>DB: UPDATE interaction_action, video_stat
+  Auth->>H: Interaction.Like（用户上下文）
+  H->>S: 显式设置点赞状态
+  S->>Repo: 设置动作状态、维护幂等结果和统计快照
+  Repo->>DB: INSERT/UPDATE interaction_*, video_stat
   S-->>H: 返回点赞状态与统计
   H-->>C: 200 OK
 ```
@@ -344,7 +345,7 @@ flowchart TB
 ## 6. 说明
 
 - 当前代码以 Go API 单体承载用户、视频、Feed、互动与上传能力，内部按接口层、应用层、领域层、基础设施层组织。
-- 业务接口统一挂载在 `/api/*`；互动接口为 `/api/interactions/*` 与 `/api/comments`。静态文件通过 `/uploads/*` 访问，健康检查使用 `/health`。
-- 数据持久化使用 MySQL，GORM 自动迁移 `users`、`videos`、`video_stat`、`interaction_action`、`interaction_action_idempotency` 与 `interaction_comment` 表。
+- 业务接口统一挂载在 `/api/*`；点赞和收藏使用 `/api/videos/:videoId/like`、`/api/videos/:videoId/favorite`，评论使用 `/api/videos/:videoId/comments` 和 `/api/comments/:commentId`。静态文件通过 `/uploads/*` 访问，健康检查使用 `/health`。
+- 数据持久化使用 PostgreSQL，GORM 自动迁移 `users`、`videos`、`video_stat`、`interaction_action`、`interaction_action_idempotency` 与 `interaction_comment` 表。
 - Feed 当前采用 Timeline 策略，按 `published_at DESC, id DESC` 排序，并通过 Base64 游标分页。
 - 推荐、审核、消息、治理和监控模块作为演进边界保留；已落地的互动模块后续可接入异步事件和独立服务。

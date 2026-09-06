@@ -39,9 +39,9 @@ Gin 路由
 
 | 方法 | 路径 | 鉴权 | 成功响应 | 可能的错误状态 |
 | --- | --- | --- | --- | --- |
-| `POST` | `/api/auth/register` | 无 | `201`，返回用户资料 | `400`、`409`、`500` |
-| `POST` | `/api/auth/login/password` | 无 | `200`，返回访问令牌 | `400`、`401`、`500` |
-| `POST` | `/api/auth/logout` | Bearer JWT | `204`，无响应体 | `401`、`500` |
+| `POST` | `/api/users` | 无 | `201`，返回用户资料 | `400`、`409`、`500` |
+| `POST` | `/api/sessions` | 无 | `200`，返回访问令牌 | `400`、`401`、`500` |
+| `DELETE` | `/api/sessions/current` | Bearer JWT | `204`，无响应体 | `401`、`500` |
 | `GET` | `/api/users/me` | Bearer JWT | `200`，返回当前用户资料 | `401`、`404`、`500` |
 | `PATCH` | `/api/users/me` | Bearer JWT | `200`，返回更新后的用户资料 | `400`、`401`、`404`、`500` |
 

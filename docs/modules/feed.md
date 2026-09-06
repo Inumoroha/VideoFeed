@@ -8,12 +8,11 @@
 
 | 方法 | 接口路径             | 作用                       | 鉴权   |
 | ---- | -------------------- | -------------------------- | ------ |
-| GET  | `/api/feed/timeline` | 获取按发布时间排序的视频流 | 可匿名 |
-| GET  | `/api/feed/refresh`  | 从时间线起点刷新视频流     | 可匿名 |
+| GET  | `/api/feed-items` | 获取按发布时间排序的视频流 | 可匿名 |
 
 ### 2.1 时间线信息流
 
-`GET /api/feed/timeline` 查询状态为已发布且已设置发布时间的视频，排序为 `published_at DESC, id DESC`。
+`GET /api/feed-items` 查询状态为已发布且已设置发布时间的视频，排序为 `published_at DESC, id DESC`。
 
 `limit` 为可选查询参数，省略时默认返回 20 条，最大返回 100 条；传入非正数时返回 `400`。`cursor` 为上一页响应中的 `next_cursor`，无游标时从时间线起点查询。
 
@@ -43,10 +42,6 @@
     "has_more": true
 }
 ```
-
-### 2.2 刷新信息流
-
-`GET /api/feed/refresh` 接收与时间线接口相同的 `limit` 参数，不接收 `cursor`，总是从时间线起点查询，并返回相同的分页响应结构。
 
 ## 3. 数据来源
 
