@@ -16,3 +16,30 @@ func TestNewPreservesPasswordWhitespace(t *testing.T) {
 		t.Fatal("Authenticate() accepted a password with missing whitespace")
 	}
 }
+
+// TestRestoreUserWithStats 验证恢复用户时会保留有效统计值并将负值归零。
+func TestRestoreUserWithStats(t *testing.T) {
+	user := RestoreUserWithStats(
+		1,
+		"account",
+		"password-hash",
+		"nickname",
+		RoleUser,
+		"",
+		"",
+		StatusNormal,
+		3,
+		-1,
+		5,
+	)
+
+	if user.FollowingCount != 3 {
+		t.Fatalf("FollowingCount = %d, want 3", user.FollowingCount)
+	}
+	if user.FollowerCount != 0 {
+		t.Fatalf("FollowerCount = %d, want 0", user.FollowerCount)
+	}
+	if user.WorkCount != 5 {
+		t.Fatalf("WorkCount = %d, want 5", user.WorkCount)
+	}
+}
