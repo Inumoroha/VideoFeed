@@ -140,13 +140,14 @@ function LoginPage({ session, onNavigate }) {
     const [message, setMessage] = useState("");
     const [submitting, setSubmitting] = useState(false);
 
+    // handleSubmit 注册或登录账号，并在成功后保存会话信息。
     async function handleSubmit(event) {
         event.preventDefault();
         setSubmitting(true);
         setMessage("");
         try {
             if (mode === "register") {
-                await apiRequest("/api/auth/register", {
+                await apiRequest("/api/users", {
                     method: "POST",
                     body: {
                         account: form.account.trim(),
@@ -155,7 +156,7 @@ function LoginPage({ session, onNavigate }) {
                     },
                 });
             }
-            const tokenResponse = await apiRequest("/api/auth/login/password", {
+            const tokenResponse = await apiRequest("/api/sessions", {
                 method: "POST",
                 body: {
                     account: form.account.trim(),
@@ -401,11 +402,12 @@ function FeedPage({ session, onNavigate }) {
     const dragRef = useRef(null);
     const swipeRef = useRef(null);
 
+    // loadFeed 请求 Feed 数据并更新当前视频列表及加载状态。
     const loadFeed = useCallback(() => {
         let live = true;
         setFeedState("loading");
         setFeedError("");
-        apiRequest("/api/feed/timeline?limit=12", { token: session.token })
+        apiRequest("/api/feed-items?limit=12", { token: session.token })
             .then((data) => {
                 if (!live) return;
                 setSwipe(null);
@@ -424,7 +426,9 @@ function FeedPage({ session, onNavigate }) {
         };
     }, [session.token]);
 
-    useEffect(() => loadFeed(), [loadFeed]);
+    useEffect(() => {
+        return loadFeed();
+    }, [loadFeed]);
 
     useEffect(() => {
         return () => {
@@ -463,16 +467,17 @@ function FeedPage({ session, onNavigate }) {
         return false;
     }, [onNavigate, session.token]);
 
-    const toggleLike = useCallback(async () => {
+    // setLike 根据当前点赞状态设置或取消当前视频的点赞。
+    const setLike = useCallback(async () => {
         if (!current || swipe || !requireLogin()) return;
+        const nextLiked = !Boolean(liked[current.video_id]);
         try {
-            const data = await apiRequest("/api/interactions/like", {
-                method: "POST",
+            const data = await apiRequest(`/api/videos/${current.video_id}/like`, {
+                method: nextLiked ? "PUT" : "DELETE",
                 token: session.token,
                 headers: {
                     "Idempotency-Key": `web-like-${current.video_id}-${Date.now()}`,
                 },
-                body: { video_id: current.video_id },
             });
             setLiked((state) => ({
                 ...state,
@@ -488,19 +493,23 @@ function FeedPage({ session, onNavigate }) {
                 onNavigate("/auth");
             }
         }
-    }, [current, onNavigate, requireLogin, session, swipe, updateCurrentItem]);
+    }, [current, liked, onNavigate, requireLogin, session, swipe, updateCurrentItem]);
 
-    const toggleFavorite = useCallback(async () => {
+    // setFavorite 根据当前收藏状态设置或取消当前视频的收藏。
+    const setFavorite = useCallback(async () => {
         if (!current || swipe || !requireLogin()) return;
+        const nextFavorited = !Boolean(favorited[current.video_id]);
         try {
-            const data = await apiRequest("/api/interactions/favorite", {
-                method: "POST",
-                token: session.token,
-                headers: {
-                    "Idempotency-Key": `web-favorite-${current.video_id}-${Date.now()}`,
+            const data = await apiRequest(
+                `/api/videos/${current.video_id}/favorite`,
+                {
+                    method: nextFavorited ? "PUT" : "DELETE",
+                    token: session.token,
+                    headers: {
+                        "Idempotency-Key": `web-favorite-${current.video_id}-${Date.now()}`,
+                    },
                 },
-                body: { video_id: current.video_id },
-            });
+            );
             setFavorited((state) => ({
                 ...state,
                 [current.video_id]: Boolean(data.active),
@@ -515,14 +524,15 @@ function FeedPage({ session, onNavigate }) {
                 onNavigate("/auth");
             }
         }
-    }, [current, onNavigate, requireLogin, session, swipe, updateCurrentItem]);
+    }, [current, favorited, onNavigate, requireLogin, session, swipe, updateCurrentItem]);
 
+    // loadComments 请求当前视频的评论列表并更新评论面板状态。
     const loadComments = useCallback(() => {
         if (!current) return undefined;
         let live = true;
         setCommentsState("loading");
         setCommentsError("");
-        apiRequest(`/api/comments?video_id=${current.video_id}&limit=50`)
+        apiRequest(`/api/videos/${current.video_id}/comments?limit=50`)
             .then((data) => {
                 if (!live) return;
                 setComments(data.items || []);
@@ -544,19 +554,23 @@ function FeedPage({ session, onNavigate }) {
         return loadComments();
     }, [commentsOpen, loadComments]);
 
+    // submitComment 发布当前输入的评论并同步评论数量。
     const submitComment = useCallback(async () => {
         if (!current || !requireLogin()) return;
         const content = commentText.trim();
         if (!content) return;
         try {
-            const data = await apiRequest("/api/comments", {
-                method: "POST",
-                token: session.token,
-                headers: {
-                    "Idempotency-Key": `web-comment-${current.video_id}-${Date.now()}`,
+            const data = await apiRequest(
+                `/api/videos/${current.video_id}/comments`,
+                {
+                    method: "POST",
+                    token: session.token,
+                    headers: {
+                        "Idempotency-Key": `web-comment-${current.video_id}-${Date.now()}`,
+                    },
+                    body: { content },
                 },
-                body: { video_id: current.video_id, content },
-            });
+            );
             setCommentText("");
             setComments((state) => [
                 data,
@@ -725,10 +739,10 @@ function FeedPage({ session, onNavigate }) {
                 moveTo(Math.max(0, index - 1));
             }
             if (event.key === "l" || event.key === "L") {
-                toggleLike();
+                setLike();
             }
             if (event.key === "f" || event.key === "F") {
-                toggleFavorite();
+                setFavorite();
             }
             if (event.key === "c" || event.key === "C") {
                 setCommentsOpen(true);
@@ -736,7 +750,7 @@ function FeedPage({ session, onNavigate }) {
         };
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [index, items.length, swipe, toggleFavorite, toggleLike]);
+    }, [index, items.length, setFavorite, setLike, swipe]);
 
     function handleWheel(event) {
         if (
@@ -803,9 +817,9 @@ function FeedPage({ session, onNavigate }) {
                                         favorited={Boolean(
                                             favorited[visibleNext.video_id],
                                         )}
-                                        onLike={toggleLike}
+                                        onLike={setLike}
                                         onComment={() => setCommentsOpen(true)}
-                                        onFavorite={toggleFavorite}
+                                        onFavorite={setFavorite}
                                     />
                                 </div>
                             )}
@@ -816,9 +830,9 @@ function FeedPage({ session, onNavigate }) {
                                     favorited={Boolean(
                                         favorited[visibleCurrent.video_id],
                                     )}
-                                    onLike={toggleLike}
+                                    onLike={setLike}
                                     onComment={() => setCommentsOpen(true)}
-                                    onFavorite={toggleFavorite}
+                                    onFavorite={setFavorite}
                                 />
                             </div>
                             {swipe?.direction === "next" && visibleNext && (
@@ -829,9 +843,9 @@ function FeedPage({ session, onNavigate }) {
                                         favorited={Boolean(
                                             favorited[visibleNext.video_id],
                                         )}
-                                        onLike={toggleLike}
+                                        onLike={setLike}
                                         onComment={() => setCommentsOpen(true)}
-                                        onFavorite={toggleFavorite}
+                                        onFavorite={setFavorite}
                                     />
                                 </div>
                             )}
@@ -1102,7 +1116,7 @@ function ProfilePage({ session, onNavigate }) {
             return;
         }
         setVideosState("loading");
-        apiRequest("/api/videos/mine?limit=12", { token: session.token })
+        apiRequest("/api/users/me/videos?limit=12", { token: session.token })
             .then((data) => {
                 setVideos(data.items || []);
                 setVideosState("ready");
@@ -1655,7 +1669,14 @@ function navigate(path, setRoute) {
     setRoute(nextPath);
 }
 
+// logout 请求后端注销当前会话，随后清理本地认证状态并返回 Feed。
 function logout(session, setRoute) {
+    if (session.token) {
+        apiRequest("/api/sessions/current", {
+            method: "DELETE",
+            token: session.token,
+        }).catch(() => {});
+    }
     session.clearAuth();
     navigate("/feed", setRoute);
 }
