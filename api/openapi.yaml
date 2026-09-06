@@ -22,10 +22,10 @@ paths:
                 $ref: '#/components/schemas/HealthResponse'
               example:
                 status: healthy
-  /api/auth/register:
+  /api/users:
     post:
       tags:
-        - Authentication
+        - User
       summary: Register a user
       operationId: registerUser
       security: []
@@ -66,7 +66,7 @@ paths:
                 error: account already exists
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/auth/login/password:
+  /api/sessions:
     post:
       tags:
         - Authentication
@@ -105,8 +105,8 @@ paths:
                 error: invalid credentials
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/auth/logout:
-    post:
+  /api/sessions/current:
+    delete:
       tags:
         - Authentication
       summary: Log out the current user
@@ -302,7 +302,7 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/videos/mine:
+  /api/users/me/videos:
     get:
       tags:
         - Video
@@ -326,7 +326,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/feed/timeline:
+  /api/feed-items:
     get:
       tags:
         - Feed
@@ -347,49 +347,31 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/feed/refresh:
-    get:
-      tags:
-        - Feed
-      summary: Refresh the chronological video feed
-      operationId: refreshTimelineFeed
-      security: []
-      parameters:
-        - $ref: '#/components/parameters/FeedLimit'
-      responses:
-        '200':
-          description: Refreshed feed page
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FeedResponse'
-        '400':
-          $ref: '#/components/responses/InvalidRequest'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-  /api/interactions/like:
-    post:
+  /api/videos/{videoId}/like:
+    parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+    put:
       tags:
         - Interaction
-      summary: Toggle the current user's like for a video
-      operationId: toggleVideoLike
+      summary: Set the current user's like for a video
+      operationId: setVideoLike
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/InteractionIdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ToggleActionRequest'
       responses:
         '200':
-          description: Updated like state and interaction counts
+          description: Active like state and interaction counts
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ToggleActionResponse'
+                $ref: '#/components/schemas/ActionResponse'
         '400':
           $ref: '#/components/responses/InvalidRequest'
         '401':
@@ -398,29 +380,22 @@ paths:
           $ref: '#/components/responses/InteractionResourceNotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/interactions/favorite:
-    post:
+    delete:
       tags:
         - Interaction
-      summary: Toggle the current user's favorite for a video
-      operationId: toggleVideoFavorite
+      summary: Clear the current user's like for a video
+      operationId: clearVideoLike
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/InteractionIdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ToggleActionRequest'
       responses:
         '200':
-          description: Updated favorite state and interaction counts
+          description: Inactive like state and interaction counts
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ToggleActionResponse'
+                $ref: '#/components/schemas/ActionResponse'
         '400':
           $ref: '#/components/responses/InvalidRequest'
         '401':
@@ -429,7 +404,72 @@ paths:
           $ref: '#/components/responses/InteractionResourceNotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
-  /api/comments:
+  /api/videos/{videoId}/favorite:
+    parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+    put:
+      tags:
+        - Interaction
+      summary: Set the current user's favorite for a video
+      operationId: setVideoFavorite
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InteractionIdempotencyKey'
+      responses:
+        '200':
+          description: Active favorite state and interaction counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/InteractionResourceNotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+        - Interaction
+      summary: Clear the current user's favorite for a video
+      operationId: clearVideoFavorite
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InteractionIdempotencyKey'
+      responses:
+        '200':
+          description: Inactive favorite state and interaction counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/InteractionResourceNotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/videos/{videoId}/comments:
+    parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
     get:
       tags:
         - Interaction
@@ -437,13 +477,6 @@ paths:
       operationId: listVideoComments
       security: []
       parameters:
-        - name: video_id
-          in: query
-          required: true
-          schema:
-            type: integer
-            format: int64
-            minimum: 1
         - name: cursor
           in: query
           required: false
@@ -907,16 +940,7 @@ components:
         published_at:
           type: string
           format: date-time
-    ToggleActionRequest:
-      type: object
-      required:
-        - video_id
-      properties:
-        video_id:
-          type: integer
-          format: int64
-          minimum: 1
-    ToggleActionResponse:
+    ActionResponse:
       type: object
       required:
         - video_id
@@ -944,13 +968,8 @@ components:
     CreateCommentRequest:
       type: object
       required:
-        - video_id
         - content
       properties:
-        video_id:
-          type: integer
-          format: int64
-          minimum: 1
         content:
           type: string
           minLength: 1

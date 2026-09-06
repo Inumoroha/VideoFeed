@@ -90,35 +90,33 @@ func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandle
 	authMiddleware := middleware.NewJWTAuthMiddleware(jwtManager)
 	api := g.Group("/api")
 
-	auth := api.Group("/auth")
-	auth.POST("/register", userHandler.Register)
-	auth.POST("/login/password", userHandler.Login)
-	auth.POST("/logout", authMiddleware, userHandler.Logout)
+	sessions := api.Group("/sessions")
+	sessions.POST("", userHandler.Login)
+	sessions.DELETE("/current", authMiddleware, userHandler.Logout)
 
-	users := api.Group("/users", authMiddleware)
-	users.GET("/me", userHandler.Me)
-	users.PATCH("/me", userHandler.UpdateMe)
+	users := api.Group("/users")
+	users.POST("", userHandler.Register)
+	users.GET("/me", authMiddleware, userHandler.Me)
+	users.PATCH("/me", authMiddleware, userHandler.UpdateMe)
+	users.GET("/me/videos", authMiddleware, videoHandler.ListMine)
+	users.GET("/:userId/videos", videoHandler.ListByAuthor)
 
 	videos := api.Group("/videos")
 	videos.POST("", authMiddleware, videoHandler.Create)
-	videos.GET("/mine", authMiddleware, videoHandler.ListMine)
 	videos.GET("/:videoId", videoHandler.Get)
 	videos.DELETE("/:videoId", authMiddleware, videoHandler.Delete)
-	api.GET("/users/:userId/videos", videoHandler.ListByAuthor)
 
-	feed := api.Group("/feed")
-	feed.GET("/timeline", feedHandler.Timeline)
-	feed.GET("/refresh", feedHandler.Refresh)
+	api.GET("/feed-items", feedHandler.Timeline)
 
 	if len(interactionHandlers) > 0 && interactionHandlers[0] != nil {
 		interactionHandler := interactionHandlers[0]
-		interactions := api.Group("/interactions", authMiddleware)
-		interactions.POST("/like", interactionHandler.ToggleLike)
-		interactions.POST("/favorite", interactionHandler.ToggleFavorite)
-		comments := api.Group("/comments")
-		comments.GET("", interactionHandler.ListComments)
-		comments.POST("", authMiddleware, interactionHandler.CreateComment)
-		comments.DELETE("/:commentId", authMiddleware, interactionHandler.DeleteComment)
+		videos.PUT("/:videoId/like", authMiddleware, interactionHandler.Like)
+		videos.DELETE("/:videoId/like", authMiddleware, interactionHandler.Unlike)
+		videos.PUT("/:videoId/favorite", authMiddleware, interactionHandler.Favorite)
+		videos.DELETE("/:videoId/favorite", authMiddleware, interactionHandler.Unfavorite)
+		videos.POST("/:videoId/comments", authMiddleware, interactionHandler.CreateComment)
+		videos.GET("/:videoId/comments", interactionHandler.ListComments)
+		api.DELETE("/comments/:commentId", authMiddleware, interactionHandler.DeleteComment)
 	}
 
 	uploads := api.Group("/uploads", authMiddleware)

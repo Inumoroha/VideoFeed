@@ -58,22 +58,23 @@ func TestRegisterRoutesRegistersExpectedPaths(t *testing.T) {
 	}
 
 	for _, route := range []string{
-		http.MethodPost + " /api/auth/register",
-		http.MethodPost + " /api/auth/login/password",
-		http.MethodPost + " /api/auth/logout",
+		http.MethodPost + " /api/sessions",
+		http.MethodDelete + " /api/sessions/current",
+		http.MethodPost + " /api/users",
 		http.MethodGet + " /api/users/me",
 		http.MethodPatch + " /api/users/me",
+		http.MethodGet + " /api/users/me/videos",
+		http.MethodGet + " /api/users/:userId/videos",
 		http.MethodPost + " /api/videos",
-		http.MethodGet + " /api/videos/mine",
 		http.MethodGet + " /api/videos/:videoId",
 		http.MethodDelete + " /api/videos/:videoId",
-		http.MethodGet + " /api/users/:userId/videos",
-		http.MethodGet + " /api/feed/timeline",
-		http.MethodGet + " /api/feed/refresh",
-		http.MethodPost + " /api/interactions/like",
-		http.MethodPost + " /api/interactions/favorite",
-		http.MethodGet + " /api/comments",
-		http.MethodPost + " /api/comments",
+		http.MethodPut + " /api/videos/:videoId/like",
+		http.MethodDelete + " /api/videos/:videoId/like",
+		http.MethodPut + " /api/videos/:videoId/favorite",
+		http.MethodDelete + " /api/videos/:videoId/favorite",
+		http.MethodPost + " /api/videos/:videoId/comments",
+		http.MethodGet + " /api/videos/:videoId/comments",
+		http.MethodGet + " /api/feed-items",
 		http.MethodDelete + " /api/comments/:commentId",
 		http.MethodPost + " /api/uploads",
 	} {
@@ -81,11 +82,19 @@ func TestRegisterRoutesRegistersExpectedPaths(t *testing.T) {
 			t.Errorf("missing route %q", route)
 		}
 	}
-	if routes[http.MethodPost+" /api/auth/login"] {
-		t.Error("unexpected legacy login route /api/auth/login")
-	}
-	if routes[http.MethodPost+" /api/feed/view-events"] {
-		t.Error("unexpected removed feed view-events route")
+	for _, route := range []string{
+		http.MethodPost + " /api/auth/register",
+		http.MethodPost + " /api/auth/login/password",
+		http.MethodPost + " /api/interactions/like",
+		http.MethodPost + " /api/interactions/favorite",
+		http.MethodPost + " /api/comments",
+		http.MethodGet + " /api/comments",
+		http.MethodGet + " /api/feed/timeline",
+		http.MethodGet + " /api/feed/refresh",
+	} {
+		if routes[route] {
+			t.Errorf("unexpected legacy route %q", route)
+		}
 	}
 }
 
