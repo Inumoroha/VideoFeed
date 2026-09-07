@@ -6,10 +6,25 @@ import (
 	"strings"
 
 	domainuser "github.com/inumoroha/video-feed/internal/domain/user"
+	domainvideo "github.com/inumoroha/video-feed/internal/domain/video"
 
 	"gorm.io/gorm"
 )
 
+// userWithStatModel 是包含用户信息和统计数据的持久化模型。
+type userWithStatModel struct {
+	ID             int64  `gorm:"column:id"`
+	Account        string `gorm:"column:account"`
+	PasswordHash   string `gorm:"column:password"`
+	Nickname       string `gorm:"column:nickname"`
+	AvatarURL      string `gorm:"column:avatar_url"`
+	Bio            string `gorm:"column:bio"`
+	Status         int    `gorm:"column:status"`
+	Role           string `gorm:"column:role"`
+	FollowingCount int    `gorm:"column:following_count"`
+	FollowerCount  int    `gorm:"column:follower_count"`
+	WorkCount      int    `gorm:"column:work_count"`
+}
 type Repository struct {
 	gormDB *gorm.DB
 }
@@ -113,7 +128,7 @@ func (r *Repository) FindByAccount(ctx context.Context, account string) (*domain
 	), nil
 }
 
-// FindByID 按用户 ID 查询持久化记录，并将其恢复为领域用户对象。
+// FindByID 按用户 ID 查询持久化记录和已发布作品数，并将其恢复为领域用户对象。
 func (r *Repository) FindByID(ctx context.Context, id int64) (*domainuser.User, error) {
 	if r == nil || r.gormDB == nil {
 		return nil, errors.New("user repository is not initialized")
@@ -125,8 +140,14 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (*domainuser.User, 
 		ctx = context.Background()
 	}
 
-	var user UserModel
-	err := r.gormDB.WithContext(ctx).Where("id = ?", id).First(&user).Error
+	var user userWithStatModel
+	err := r.gormDB.WithContext(ctx).
+		Table("users AS u").
+		Select(userWithStatSelect()).
+		Joins("LEFT JOIN (SELECT author_id, COUNT(*) AS work_count FROM videos WHERE status = ? GROUP BY author_id) AS published_works ON published_works.author_id = u.id", domainvideo.StatusPublished).
+		Where("u.id = ?", id).
+		Take(&user).
+		Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, domainuser.ErrUserNotFound
@@ -134,16 +155,7 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (*domainuser.User, 
 		return nil, err
 	}
 
-	return domainuser.RestoreUser(
-		user.ID,
-		user.Account,
-		user.PasswordHash,
-		user.Nickname,
-		user.Role,
-		user.AvatarURL,
-		user.Bio,
-		user.Status,
-	), nil
+	return restoreUser(user), nil
 }
 
 // UpdateProfile 按用户 ID 更新昵称、头像地址和简介，并将不存在的用户映射为领域错误。
@@ -176,4 +188,26 @@ func (r *Repository) UpdateProfile(ctx context.Context, user *domainuser.User) e
 		return domainuser.ErrUserNotFound
 	}
 	return nil
+}
+
+// restoreUser 将包含统计信息的持久化查询结果转换为领域用户对象。
+func restoreUser(user userWithStatModel) *domainuser.User {
+	return domainuser.RestoreUserWithStats(
+		user.ID,
+		user.Account,
+		user.PasswordHash,
+		user.Nickname,
+		user.Role,
+		user.AvatarURL,
+		user.Bio,
+		user.Status,
+		user.FollowingCount,
+		user.FollowerCount,
+		user.WorkCount,
+	)
+}
+
+// userWithStatSelect 返回用户和已发布作品统计的 SELECT 子句；关注统计未实现时返回零。
+func userWithStatSelect() string {
+	return "u.id, u.account, u.password, u.nickname, u.avatar_url, u.bio, u.status, u.role, 0 AS following_count, 0 AS follower_count, COALESCE(published_works.work_count, 0) AS work_count"
 }

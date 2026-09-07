@@ -8,9 +8,12 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	domainuser "github.com/inumoroha/video-feed/internal/domain/user"
+	domainvideo "github.com/inumoroha/video-feed/internal/domain/video"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+const findByIDQuery = `SELECT u.id, u.account, u.password, u.nickname, u.avatar_url, u.bio, u.status, u.role, 0 AS following_count, 0 AS follower_count, COALESCE(published_works.work_count, 0) AS work_count FROM users AS u LEFT JOIN (SELECT author_id, COUNT(*) AS work_count FROM videos WHERE status = $1 GROUP BY author_id) AS published_works ON published_works.author_id = u.id WHERE u.id = $2 LIMIT $3`
 
 // TestFindByIDRejectsUninitializedRepository 验证未初始化仓储不会触发空指针异常。
 func TestFindByIDRejectsUninitializedRepository(t *testing.T) {
@@ -95,13 +98,42 @@ func TestFindByAccountReturnsNotFound(t *testing.T) {
 // TestFindByIDReturnsNotFound 验证查询不存在的用户 ID 时返回领域层未找到错误。
 func TestFindByIDReturnsNotFound(t *testing.T) {
 	repository, mock := NewMockRepository(t)
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "users" WHERE id = $1 ORDER BY "users"."id" LIMIT $2`)).
-		WithArgs(1, 1).
+	mock.ExpectQuery(regexp.QuoteMeta(findByIDQuery)).
+		WithArgs(domainvideo.StatusPublished, 1, 1).
 		WillReturnError(gorm.ErrRecordNotFound)
 
 	_, err := repository.FindByID(context.Background(), 1)
 	if !errors.Is(err, domainuser.ErrUserNotFound) {
 		t.Fatalf("FindByID() error = %v, want %v", err, domainuser.ErrUserNotFound)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations were not met: %v", err)
+	}
+}
+
+// TestFindByIDRestoresUserAndStats 验证资料查询恢复密码哈希和统计数据。
+func TestFindByIDRestoresUserAndStats(t *testing.T) {
+	repository, mock := NewMockRepository(t)
+	mock.ExpectQuery(regexp.QuoteMeta(findByIDQuery)).
+		WithArgs(domainvideo.StatusPublished, 1, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "account", "password", "nickname", "avatar_url", "bio", "status", "role",
+			"following_count", "follower_count", "work_count",
+		}).AddRow(
+			1, "account", "password-hash", "nickname", "https://example.com/avatar.png", "bio", domainuser.StatusNormal, domainuser.RoleUser,
+			0, 0, 3,
+		))
+
+	got, err := repository.FindByID(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("FindByID() error = %v", err)
+	}
+	if got.ID != 1 || got.Account != "account" || got.Password != "password-hash" || got.Nickname != "nickname" ||
+		got.AvatarURL != "https://example.com/avatar.png" || got.Bio != "bio" || got.Status != domainuser.StatusNormal || got.Role != domainuser.RoleUser {
+		t.Fatalf("FindByID() user = %+v, want persisted user fields", got)
+	}
+	if got.FollowingCount != 0 || got.FollowerCount != 0 || got.WorkCount != 3 {
+		t.Fatalf("FindByID() stats = (%d, %d, %d), want (0, 0, 3)", got.FollowingCount, got.FollowerCount, got.WorkCount)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("SQL expectations were not met: %v", err)
@@ -188,10 +220,15 @@ func TestUpdateProfilePersistsChangedFields(t *testing.T) {
 		t.Fatalf("UpdateProfile() error = %v", err)
 	}
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "users" WHERE id = $1 ORDER BY "users"."id" LIMIT $2`)).
-		WithArgs(user.ID, 1).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "account", "password", "nickname", "role", "avatar_url", "bio", "status", "created_at", "updated_at"}).
-			AddRow(user.ID, user.Account, user.Password, user.Nickname, user.Role, user.AvatarURL, user.Bio, user.Status, nil, nil))
+	mock.ExpectQuery(regexp.QuoteMeta(findByIDQuery)).
+		WithArgs(domainvideo.StatusPublished, user.ID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "account", "password", "nickname", "avatar_url", "bio", "status", "role",
+			"following_count", "follower_count", "work_count",
+		}).AddRow(
+			user.ID, user.Account, user.Password, user.Nickname, user.AvatarURL, user.Bio, user.Status, user.Role,
+			0, 0, 2,
+		))
 	got, err := repository.FindByID(context.Background(), user.ID)
 	if err != nil {
 		t.Fatalf("FindByID() error = %v", err)
@@ -201,6 +238,9 @@ func TestUpdateProfilePersistsChangedFields(t *testing.T) {
 	}
 	if got.Account != user.Account || got.Password != user.Password || got.Role != user.Role || got.Status != user.Status {
 		t.Fatalf("FindByID() unchanged fields = %+v, want account, password, role, and status preserved", got)
+	}
+	if got.FollowingCount != 0 || got.FollowerCount != 0 || got.WorkCount != 2 {
+		t.Fatalf("FindByID() stats = (%d, %d, %d), want (0, 0, 2)", got.FollowingCount, got.FollowerCount, got.WorkCount)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("SQL expectations were not met: %v", err)
