@@ -93,6 +93,61 @@ func TestRegisterReturnsProfile(t *testing.T) {
 	}
 }
 
+// TestServiceRejectsMissingDependencies 验证用户服务缺少依赖时返回初始化错误而不触发 panic。
+func TestServiceRejectsMissingDependencies(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(*Service) error
+	}{
+		{
+			name: "nil service",
+			call: func(service *Service) error {
+				_, err := service.Register(context.Background(), "account", "password", "nickname")
+				return err
+			},
+		},
+		{
+			name: "nil repository",
+			call: func(service *Service) error {
+				_, err := service.GetProfile(context.Background(), 1)
+				return err
+			},
+		},
+		{
+			name: "nil signer",
+			call: func(service *Service) error {
+				_, err := service.Login(context.Background(), "account", "password")
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var service *Service
+			switch test.name {
+			case "nil repository":
+				service = NewService(nil, &serviceTestSigner{})
+			case "nil signer":
+				service = NewService(&serviceTestRepository{}, nil)
+			}
+			if err := test.call(service); !errors.Is(err, ErrUserServiceNotInitialized) {
+				t.Fatalf("service call error = %v, want %v", err, ErrUserServiceNotInitialized)
+			}
+		})
+	}
+}
+
+// TestGetProfileRejectsNilRepositoryResult 验证仓储返回空用户时应用服务返回加载错误。
+func TestGetProfileRejectsNilRepositoryResult(t *testing.T) {
+	service := NewService(&serviceTestRepository{}, &serviceTestSigner{})
+
+	_, err := service.GetProfile(context.Background(), 1)
+	if !errors.Is(err, ErrLoadUserFailed) {
+		t.Fatalf("GetProfile() error = %v, want %v", err, ErrLoadUserFailed)
+	}
+}
+
 // TestLoginReturnsAccessToken 验证登录成功后返回令牌信息并传递用户身份。
 func TestLoginReturnsAccessToken(t *testing.T) {
 	user, err := domainuser.New("account", "password", "nickname")
@@ -136,6 +191,32 @@ func TestGetProfileMapsErrors(t *testing.T) {
 				t.Fatalf("GetProfile() error = %v, want %v", err, test.wantErr)
 			}
 		})
+	}
+}
+
+// TestGetProfileReturnsStats 验证资料查询会保留领域用户的统计字段。
+func TestGetProfileReturnsStats(t *testing.T) {
+	user := domainuser.RestoreUserWithStats(
+		1,
+		"account",
+		"password-hash",
+		"nickname",
+		domainuser.RoleUser,
+		"https://example.com/avatar.png",
+		"bio",
+		domainuser.StatusNormal,
+		2,
+		3,
+		4,
+	)
+	service := NewService(&serviceTestRepository{user: user}, &serviceTestSigner{})
+
+	profile, err := service.GetProfile(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("GetProfile() error = %v", err)
+	}
+	if profile.FollowingCount != 2 || profile.FollowerCount != 3 || profile.WorkCount != 4 {
+		t.Fatalf("GetProfile() stats = (%d, %d, %d), want (2, 3, 4)", profile.FollowingCount, profile.FollowerCount, profile.WorkCount)
 	}
 }
 

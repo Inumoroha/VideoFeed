@@ -3,6 +3,8 @@ package user
 import "errors"
 
 var (
+	// ErrUserServiceNotInitialized 表示用户应用服务缺少必要依赖。
+	ErrUserServiceNotInitialized = errors.New("user service is not initialized")
 	// ErrLoadUserFailed 表示从用户仓储加载用户失败。
 	ErrLoadUserFailed = errors.New("failed to load user")
 	// ErrSaveUserFailed 表示保存用户到用户仓储失败。
