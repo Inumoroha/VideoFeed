@@ -3,6 +3,8 @@ package user
 import (
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	applicationuser "github.com/inumoroha/video-feed/internal/application/user"
@@ -10,7 +12,7 @@ import (
 	"github.com/inumoroha/video-feed/internal/middleware"
 )
 
-// Handler 处理用户注册、登录、退出登录和当前用户资料相关的 HTTP 请求。
+// Handler 处理用户注册、登录、退出登录和用户资料相关的 HTTP 请求。
 type Handler struct {
 	service *applicationuser.Service
 }
@@ -125,6 +127,32 @@ func (h *Handler) Me(c *gin.Context) {
 	c.JSON(http.StatusOK, profileResponse(profile))
 }
 
+// Get 读取公开用户资料，用于访问他人主页。
+func (h *Handler) Get(c *gin.Context) {
+	if h == nil || h.service == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+
+	userID, err := parsePositiveUserID(c.Param("userId"))
+	if err != nil {
+		writeProfileError(c, err)
+		return
+	}
+
+	profile, err := h.service.GetPublicProfile(c.Request.Context(), userID)
+	if err != nil {
+		writeProfileError(c, err)
+		return
+	}
+
+	if profile == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+	c.JSON(http.StatusOK, publicProfileResponse(profile))
+}
+
 // UpdateMe 解析当前用户的资料更新请求并返回更新后的资料。
 func (h *Handler) UpdateMe(c *gin.Context) {
 	if h == nil || h.service == nil {
@@ -157,17 +185,42 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 	c.JSON(http.StatusOK, profileResponse(profile))
 }
 
+// publicProfileResponse 将应用层 Profile 转成公开 JSON 结构。
+func publicProfileResponse(profile *applicationuser.Profile) publicUserProfileResponse {
+	return publicUserProfileResponse{
+		ID:             profile.ID,
+		Nickname:       profile.Nickname,
+		AvatarURL:      profile.AvatarURL,
+		Bio:            profile.Bio,
+		FollowingCount: profile.FollowingCount,
+		FollowerCount:  profile.FollowerCount,
+		WorkCount:      profile.WorkCount,
+	}
+}
+
 // profileResponse 将应用层用户资料转换为 HTTP 响应结构。
 func profileResponse(profile *applicationuser.Profile) userProfileResponse {
 	return userProfileResponse{
-		ID:        profile.ID,
-		Account:   profile.Account,
-		Nickname:  profile.Nickname,
-		AvatarURL: profile.AvatarURL,
-		Bio:       profile.Bio,
-		Status:    profile.Status,
-		Role:      profile.Role,
+		ID:             profile.ID,
+		Account:        profile.Account,
+		Nickname:       profile.Nickname,
+		AvatarURL:      profile.AvatarURL,
+		Bio:            profile.Bio,
+		Status:         profile.Status,
+		Role:           profile.Role,
+		FollowingCount: profile.FollowingCount,
+		FollowerCount:  profile.FollowerCount,
+		WorkCount:      profile.WorkCount,
 	}
+}
+
+// parsePositiveUserID 将字符串解析为正整数用户 ID。
+func parsePositiveUserID(raw string) (int64, error) {
+	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || value <= 0 {
+		return 0, domainuser.ErrInvalidUserID
+	}
+	return value, nil
 }
 
 // userIDFromContext 读取认证中间件写入的正数用户 ID。

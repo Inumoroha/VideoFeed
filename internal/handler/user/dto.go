@@ -29,11 +29,25 @@ type tokenResponse struct {
 
 // userProfileResponse 表示对外返回的用户基本资料。
 type userProfileResponse struct {
-	ID        int64  `json:"id"`
-	Account   string `json:"account"`
-	Nickname  string `json:"nickname"`
-	Role      string `json:"role"`
-	Bio       string `json:"bio"`
-	Status    int    `json:"status"`
-	AvatarURL string `json:"avatar_url"`
+	ID             int64  `json:"id"`
+	Account        string `json:"account"`
+	Nickname       string `json:"nickname"`
+	Role           string `json:"role"`
+	Bio            string `json:"bio"`
+	Status         int    `json:"status"`
+	AvatarURL      string `json:"avatar_url"`
+	FollowingCount int    `json:"following_count"`
+	FollowerCount  int    `json:"follower_count"`
+	WorkCount      int    `json:"work_count"`
+}
+
+// publicUserProfileResponse 表示公开用户资料响应，隐藏账号、角色和状态等内部字段。
+type publicUserProfileResponse struct {
+	ID             int64  `json:"id"`
+	Nickname       string `json:"nickname"`
+	AvatarURL      string `json:"avatar_url"`
+	Bio            string `json:"bio"`
+	FollowingCount int    `json:"following_count"`
+	FollowerCount  int    `json:"follower_count"`
+	WorkCount      int    `json:"work_count"`
 }

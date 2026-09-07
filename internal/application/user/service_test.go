@@ -220,6 +220,33 @@ func TestGetProfileReturnsStats(t *testing.T) {
 	}
 }
 
+// TestGetPublicProfileReturnsProfile 验证公开资料查询复用用户资料查询并保留统计字段。
+func TestGetPublicProfileReturnsProfile(t *testing.T) {
+	user := domainuser.RestoreUserWithStats(
+		1,
+		"account",
+		"password-hash",
+		"nickname",
+		domainuser.RoleUser,
+		"https://example.com/avatar.png",
+		"bio",
+		domainuser.StatusNormal,
+		2,
+		3,
+		4,
+	)
+	service := NewService(&serviceTestRepository{user: user}, &serviceTestSigner{})
+
+	profile, err := service.GetPublicProfile(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("GetPublicProfile() error = %v", err)
+	}
+	if profile == nil || profile.ID != user.ID || profile.Nickname != user.Nickname ||
+		profile.FollowingCount != 2 || profile.FollowerCount != 3 || profile.WorkCount != 4 {
+		t.Fatalf("GetPublicProfile() profile = %+v, want user profile and stats", profile)
+	}
+}
+
 // TestUpdateProfileUpdatesUser 验证资料更新会调用领域逻辑并保存更新后的用户。
 func TestUpdateProfileUpdatesUser(t *testing.T) {
 	user := &domainuser.User{ID: 2, Account: "account", Nickname: "old", Role: domainuser.RoleUser}

@@ -121,13 +121,16 @@ func TestMeReturnsUnauthorizedWithoutUserID(t *testing.T) {
 // TestMeReturnsProfile 验证当前用户资料接口返回认证用户的资料。
 func TestMeReturnsProfile(t *testing.T) {
 	user := &domainuser.User{
-		ID:        1,
-		Account:   "account",
-		Nickname:  "nickname",
-		Role:      domainuser.RoleUser,
-		Bio:       "bio",
-		AvatarURL: "https://example.com/avatar.png",
-		Status:    domainuser.StatusNormal,
+		ID:             1,
+		Account:        "account",
+		Nickname:       "nickname",
+		Role:           domainuser.RoleUser,
+		Bio:            "bio",
+		AvatarURL:      "https://example.com/avatar.png",
+		Status:         domainuser.StatusNormal,
+		FollowingCount: 2,
+		FollowerCount:  3,
+		WorkCount:      4,
 	}
 	service := applicationuser.NewService(&testRepository{user: user}, testTokenSigner{})
 	recorder := httptest.NewRecorder()
@@ -140,7 +143,7 @@ func TestMeReturnsProfile(t *testing.T) {
 		t.Fatalf("Me() status = %d, want %d", recorder.Code, http.StatusOK)
 	}
 	response := recorder.Body.String()
-	for _, field := range []string{`"id":1`, `"account":"account"`, `"nickname":"nickname"`, `"bio":"bio"`, `"status":1`} {
+	for _, field := range []string{`"id":1`, `"account":"account"`, `"nickname":"nickname"`, `"bio":"bio"`, `"status":1`, `"following_count":2`, `"follower_count":3`, `"work_count":4`} {
 		if !strings.Contains(response, field) {
 			t.Fatalf("Me() response = %s, missing %s", response, field)
 		}
@@ -157,6 +160,70 @@ func TestMeWithNilServiceReturnsInternalServerError(t *testing.T) {
 
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("Me() status = %d, want %d", recorder.Code, http.StatusInternalServerError)
+	}
+}
+
+// TestGetReturnsPublicProfile 验证公开用户资料接口只返回公开字段和统计数据。
+func TestGetReturnsPublicProfile(t *testing.T) {
+	user := &domainuser.User{
+		ID:             1,
+		Account:        "private-account",
+		Nickname:       "nickname",
+		Role:           domainuser.RoleAdmin,
+		Bio:            "bio",
+		AvatarURL:      "https://example.com/avatar.png",
+		Status:         domainuser.StatusNormal,
+		FollowingCount: 2,
+		FollowerCount:  3,
+		WorkCount:      4,
+	}
+	service := applicationuser.NewService(&testRepository{user: user}, testTokenSigner{})
+	recorder := httptest.NewRecorder()
+	ginContext := newTestContext(http.MethodGet, "/users/1", "", recorder)
+	ginContext.Params = gin.Params{{Key: "userId", Value: "1"}}
+
+	NewHandler(service).Get(ginContext)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("Get() status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	response := recorder.Body.String()
+	for _, field := range []string{`"id":1`, `"nickname":"nickname"`, `"bio":"bio"`, `"following_count":2`, `"follower_count":3`, `"work_count":4`} {
+		if !strings.Contains(response, field) {
+			t.Fatalf("Get() response = %s, missing %s", response, field)
+		}
+	}
+	for _, field := range []string{`"account"`, `"role"`, `"status"`} {
+		if strings.Contains(response, field) {
+			t.Fatalf("Get() response = %s, must not contain %s", response, field)
+		}
+	}
+}
+
+// TestGetWithNilServiceReturnsInternalServerError 验证公开用户资料接口缺少应用服务时不会 panic。
+func TestGetWithNilServiceReturnsInternalServerError(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ginContext := newTestContext(http.MethodGet, "/users/1", "", recorder)
+	ginContext.Params = gin.Params{{Key: "userId", Value: "1"}}
+
+	NewHandler(nil).Get(ginContext)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("Get() status = %d, want %d", recorder.Code, http.StatusInternalServerError)
+	}
+}
+
+// TestGetRejectsInvalidUserID 验证公开用户资料接口拒绝非正整数用户 ID。
+func TestGetRejectsInvalidUserID(t *testing.T) {
+	service := applicationuser.NewService(&testRepository{}, testTokenSigner{})
+	recorder := httptest.NewRecorder()
+	ginContext := newTestContext(http.MethodGet, "/users/not-an-id", "", recorder)
+	ginContext.Params = gin.Params{{Key: "userId", Value: "not-an-id"}}
+
+	NewHandler(service).Get(ginContext)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("Get() status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
 }
 

@@ -112,6 +112,11 @@ func (s *Service) GetProfile(ctx context.Context, userID int64) (*Profile, error
 	return profileFromUser(user), nil
 }
 
+// GetPublicProfile 根据用户 ID 查询可公开展示的用户资料，并复用当前用户资料的错误处理。
+func (s *Service) GetPublicProfile(ctx context.Context, userID int64) (*Profile, error) {
+	return s.GetProfile(ctx, userID)
+}
+
 // UpdateProfile 查询用户、更新资料并保存，返回更新后的用户资料。
 func (s *Service) UpdateProfile(ctx context.Context, userID int64, nickname, avatarURL, bio *string) (*Profile, error) {
 	if !s.ready() {
