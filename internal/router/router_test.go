@@ -63,6 +63,7 @@ func TestRegisterRoutesRegistersExpectedPaths(t *testing.T) {
 		http.MethodPost + " /api/users",
 		http.MethodGet + " /api/users/me",
 		http.MethodPatch + " /api/users/me",
+		http.MethodGet + " /api/users/:userId",
 		http.MethodGet + " /api/users/me/videos",
 		http.MethodGet + " /api/users/:userId/videos",
 		http.MethodPost + " /api/videos",

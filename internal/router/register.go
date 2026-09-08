@@ -98,6 +98,7 @@ func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandle
 	users.POST("", userHandler.Register)
 	users.GET("/me", authMiddleware, userHandler.Me)
 	users.PATCH("/me", authMiddleware, userHandler.UpdateMe)
+	users.GET("/:userId", userHandler.Get)
 	users.GET("/me/videos", authMiddleware, videoHandler.ListMine)
 	users.GET("/:userId/videos", videoHandler.ListByAuthor)
 
