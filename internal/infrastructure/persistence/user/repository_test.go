@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const findByIDQuery = `SELECT u.id, u.account, u.password, u.nickname, u.avatar_url, u.bio, u.status, u.role, 0 AS following_count, 0 AS follower_count, COALESCE(published_works.work_count, 0) AS work_count FROM users AS u LEFT JOIN (SELECT author_id, COUNT(*) AS work_count FROM videos WHERE status = $1 GROUP BY author_id) AS published_works ON published_works.author_id = u.id WHERE u.id = $2 LIMIT $3`
+const findByIDQuery = `SELECT u.id, u.account, u.password, u.nickname, u.avatar_url, u.bio, u.status, u.role, COALESCE(relation_stats.following_count, 0) AS following_count, COALESCE(relation_stats.follower_count, 0) AS follower_count, COALESCE(published_works.work_count, 0) AS work_count FROM users AS u LEFT JOIN user_relation_stat AS relation_stats ON relation_stats.user_id = u.id LEFT JOIN (SELECT author_id, COUNT(*) AS work_count FROM videos WHERE status = $1 GROUP BY author_id) AS published_works ON published_works.author_id = u.id WHERE u.id = $2 LIMIT $3`
 
 // TestFindByIDRejectsUninitializedRepository 验证未初始化仓储不会触发空指针异常。
 func TestFindByIDRejectsUninitializedRepository(t *testing.T) {
@@ -121,7 +121,7 @@ func TestFindByIDRestoresUserAndStats(t *testing.T) {
 			"following_count", "follower_count", "work_count",
 		}).AddRow(
 			1, "account", "password-hash", "nickname", "https://example.com/avatar.png", "bio", domainuser.StatusNormal, domainuser.RoleUser,
-			0, 0, 3,
+			4, 5, 3,
 		))
 
 	got, err := repository.FindByID(context.Background(), 1)
@@ -132,8 +132,8 @@ func TestFindByIDRestoresUserAndStats(t *testing.T) {
 		got.AvatarURL != "https://example.com/avatar.png" || got.Bio != "bio" || got.Status != domainuser.StatusNormal || got.Role != domainuser.RoleUser {
 		t.Fatalf("FindByID() user = %+v, want persisted user fields", got)
 	}
-	if got.FollowingCount != 0 || got.FollowerCount != 0 || got.WorkCount != 3 {
-		t.Fatalf("FindByID() stats = (%d, %d, %d), want (0, 0, 3)", got.FollowingCount, got.FollowerCount, got.WorkCount)
+	if got.FollowingCount != 4 || got.FollowerCount != 5 || got.WorkCount != 3 {
+		t.Fatalf("FindByID() stats = (%d, %d, %d), want (4, 5, 3)", got.FollowingCount, got.FollowerCount, got.WorkCount)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("SQL expectations were not met: %v", err)
@@ -227,7 +227,7 @@ func TestUpdateProfilePersistsChangedFields(t *testing.T) {
 			"following_count", "follower_count", "work_count",
 		}).AddRow(
 			user.ID, user.Account, user.Password, user.Nickname, user.AvatarURL, user.Bio, user.Status, user.Role,
-			0, 0, 2,
+			6, 7, 2,
 		))
 	got, err := repository.FindByID(context.Background(), user.ID)
 	if err != nil {
@@ -239,8 +239,8 @@ func TestUpdateProfilePersistsChangedFields(t *testing.T) {
 	if got.Account != user.Account || got.Password != user.Password || got.Role != user.Role || got.Status != user.Status {
 		t.Fatalf("FindByID() unchanged fields = %+v, want account, password, role, and status preserved", got)
 	}
-	if got.FollowingCount != 0 || got.FollowerCount != 0 || got.WorkCount != 2 {
-		t.Fatalf("FindByID() stats = (%d, %d, %d), want (0, 0, 2)", got.FollowingCount, got.FollowerCount, got.WorkCount)
+	if got.FollowingCount != 6 || got.FollowerCount != 7 || got.WorkCount != 2 {
+		t.Fatalf("FindByID() stats = (%d, %d, %d), want (6, 7, 2)", got.FollowingCount, got.FollowerCount, got.WorkCount)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("SQL expectations were not met: %v", err)

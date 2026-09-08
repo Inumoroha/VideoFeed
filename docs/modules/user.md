@@ -134,7 +134,7 @@ Authorization: Bearer <access-token>
 }
 ```
 
-`work_count` 是当前用户已发布作品数。关注关系模块尚未实现，因此 `following_count` 和 `follower_count` 当前固定返回 `0`。
+`work_count` 是当前用户已发布作品数。`following_count` 和 `follower_count` 来自关系统计快照；用户尚无任何关系记录时两项均为 `0`。
 
 ### 3.5 获取公开用户资料
 

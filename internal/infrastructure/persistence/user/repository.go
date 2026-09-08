@@ -25,6 +25,8 @@ type userWithStatModel struct {
 	FollowerCount  int    `gorm:"column:follower_count"`
 	WorkCount      int    `gorm:"column:work_count"`
 }
+
+// Repository 使用 GORM 持久化用户资料及其统计信息。
 type Repository struct {
 	gormDB *gorm.DB
 }
@@ -144,6 +146,7 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (*domainuser.User, 
 	err := r.gormDB.WithContext(ctx).
 		Table("users AS u").
 		Select(userWithStatSelect()).
+		Joins("LEFT JOIN user_relation_stat AS relation_stats ON relation_stats.user_id = u.id").
 		Joins("LEFT JOIN (SELECT author_id, COUNT(*) AS work_count FROM videos WHERE status = ? GROUP BY author_id) AS published_works ON published_works.author_id = u.id", domainvideo.StatusPublished).
 		Where("u.id = ?", id).
 		Take(&user).
@@ -207,7 +210,7 @@ func restoreUser(user userWithStatModel) *domainuser.User {
 	)
 }
 
-// userWithStatSelect 返回用户和已发布作品统计的 SELECT 子句；关注统计未实现时返回零。
+// userWithStatSelect 返回用户、关注统计和已发布作品统计的 SELECT 子句。
 func userWithStatSelect() string {
-	return "u.id, u.account, u.password, u.nickname, u.avatar_url, u.bio, u.status, u.role, 0 AS following_count, 0 AS follower_count, COALESCE(published_works.work_count, 0) AS work_count"
+	return "u.id, u.account, u.password, u.nickname, u.avatar_url, u.bio, u.status, u.role, COALESCE(relation_stats.following_count, 0) AS following_count, COALESCE(relation_stats.follower_count, 0) AS follower_count, COALESCE(published_works.work_count, 0) AS work_count"
 }
