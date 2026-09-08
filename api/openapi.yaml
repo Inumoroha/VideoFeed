@@ -54,6 +54,9 @@ paths:
                 bio: ""
                 status: 1
                 avatar_url: ""
+                following_count: 0
+                follower_count: 0
+                work_count: 0
         '400':
           $ref: '#/components/responses/InvalidRequest'
         '409':
@@ -143,6 +146,9 @@ paths:
                 bio: ""
                 status: 1
                 avatar_url: ""
+                following_count: 0
+                follower_count: 0
+                work_count: 3
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -173,10 +179,58 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserProfileResponse'
+              example:
+                id: 1
+                account: demo_user
+                nickname: Updated User
+                role: user
+                bio: Updated profile
+                status: 1
+                avatar_url: https://example.com/avatar.png
+                following_count: 0
+                follower_count: 0
+                work_count: 3
         '400':
           $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/UserNotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/users/{userId}:
+    get:
+      tags:
+        - User
+      summary: Get a public user profile
+      operationId: getUserProfile
+      security: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+          example: 42
+      responses:
+        '200':
+          description: Public user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicUserProfileResponse'
+              example:
+                id: 42
+                nickname: Demo User
+                bio: Video creator
+                avatar_url: https://example.com/avatar.png
+                following_count: 12
+                follower_count: 34
+                work_count: 8
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
         '404':
           $ref: '#/components/responses/UserNotFound'
         '500':
@@ -726,6 +780,9 @@ components:
         - bio
         - status
         - avatar_url
+        - following_count
+        - follower_count
+        - work_count
       properties:
         id:
           type: integer
@@ -749,6 +806,54 @@ components:
         avatar_url:
           type: string
           example: ""
+        following_count:
+          type: integer
+          minimum: 0
+          example: 0
+        follower_count:
+          type: integer
+          minimum: 0
+          example: 0
+        work_count:
+          type: integer
+          minimum: 0
+          example: 3
+    PublicUserProfileResponse:
+      type: object
+      required:
+        - id
+        - nickname
+        - bio
+        - avatar_url
+        - following_count
+        - follower_count
+        - work_count
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 42
+        nickname:
+          type: string
+          example: Demo User
+        bio:
+          type: string
+          example: Video creator
+        avatar_url:
+          type: string
+          example: https://example.com/avatar.png
+        following_count:
+          type: integer
+          minimum: 0
+          example: 12
+        follower_count:
+          type: integer
+          minimum: 0
+          example: 34
+        work_count:
+          type: integer
+          minimum: 0
+          example: 8
     UpdateProfileRequest:
       type: object
       properties:

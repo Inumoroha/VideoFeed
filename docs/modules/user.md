@@ -9,6 +9,7 @@
 - 用户注册和密码登录；
 - 签发、校验访问用 JWT；
 - 获取和更新当前登录用户的资料；
+- 匿名获取其他用户的公开资料；
 - 处理退出登录请求。
 
 当前没有刷新令牌接口、账号找回接口、管理员接口或用户列表接口。
@@ -44,6 +45,7 @@ Gin 路由
 | `DELETE` | `/api/sessions/current` | Bearer JWT | `204`，无响应体 | `401`、`500` |
 | `GET` | `/api/users/me` | Bearer JWT | `200`，返回当前用户资料 | `401`、`404`、`500` |
 | `PATCH` | `/api/users/me` | Bearer JWT | `200`，返回更新后的用户资料 | `400`、`401`、`404`、`500` |
+| `GET` | `/api/users/{userId}` | 无 | `200`，返回公开用户资料 | `400`、`404`、`500` |
 
 注册和资料更新当前均不支持幂等键。接口路径、字段和响应以 `api/openapi.yaml` 为准。
 
@@ -71,7 +73,10 @@ Gin 路由
   "role": "user",
   "bio": "",
   "status": 1,
-  "avatar_url": ""
+  "avatar_url": "",
+  "following_count": 0,
+  "follower_count": 0,
+  "work_count": 0
 }
 ```
 
@@ -122,11 +127,40 @@ Authorization: Bearer <access-token>
   "role": "user",
   "bio": "",
   "status": 1,
-  "avatar_url": ""
+  "avatar_url": "",
+  "following_count": 0,
+  "follower_count": 0,
+  "work_count": 3
 }
 ```
 
-### 3.5 更新当前用户资料
+`work_count` 是当前用户已发布作品数。关注关系模块尚未实现，因此 `following_count` 和 `follower_count` 当前固定返回 `0`。
+
+### 3.5 获取公开用户资料
+
+该接口无需鉴权，通过路径参数 `userId` 查询其他用户的公开资料：
+
+```http
+GET /api/users/42
+```
+
+成功响应只包含昵称、头像、简介和统计字段，不返回账号、角色或状态：
+
+```json
+{
+  "id": 42,
+  "nickname": "Demo User",
+  "bio": "Video creator",
+  "avatar_url": "https://example.com/avatar.png",
+  "following_count": 12,
+  "follower_count": 34,
+  "work_count": 8
+}
+```
+
+用户不存在返回 `404`，非正整数或无法解析的 `userId` 返回 `400`。
+
+### 3.6 更新当前用户资料
 
 请求体字段均为可选，但至少要提供一个非 `null` 字段：
 

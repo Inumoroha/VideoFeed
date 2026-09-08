@@ -369,6 +369,7 @@ func writeVideoError(c *gin.Context, err error) {
 POST   /api/users
 GET    /api/users/me
 PATCH  /api/users/me
+GET    /api/users/:userId
 GET    /api/users/me/videos
 GET    /api/users/:userId/videos
 
