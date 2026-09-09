@@ -10,55 +10,83 @@ import (
 	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
 )
 
-const defaultFeedLimit = 20
+const defaultFeedLimit = 10
 
-// Service 编排信息流时间线查询和游标分页。
+// Service 通过 scene 策略注册表分发不同 Feed 场景。
 type Service struct {
-	repo domainfeed.Repository
+	strategies   map[domainfeed.Scene]Strategy
+	defaultScene domainfeed.Scene
+}
+
+// Option 用于在装配阶段注册额外 Feed 策略。
+type Option func(*Service)
+
+// WithStrategy 注册一个额外 Feed 策略。
+func WithStrategy(strategy Strategy) Option {
+	return func(s *Service) {
+		s.RegisterStrategy(strategy)
+	}
 }
 
 // NewService 创建使用指定信息流仓储的应用服务。
-func NewService(repo domainfeed.Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo domainfeed.Repository, options ...Option) *Service {
+	service := &Service{
+		strategies:   map[domainfeed.Scene]Strategy{},
+		defaultScene: domainfeed.DefaultScene,
+	}
+	service.RegisterStrategy(NewTimelineStrategy(domainfeed.SceneTimeline, repo))
+	for _, option := range options {
+		option(service)
+	}
+	return service
+}
+
+// RegisterStrategy 把 scene 和具体策略绑定，新增 Feed 类型时在装配层调用。
+func (s *Service) RegisterStrategy(strategy Strategy) {
+	if strategy == nil {
+		return
+	}
+	scene := domainfeed.NormalizeScene(strategy.Scene())
+	s.strategies[scene] = strategy
+}
+
+// GetFeed 根据 scene 选择策略并返回分页结果。
+func (s *Service) GetFeed(ctx context.Context, req FeedRequest) (*FeedResult, error) {
+	if s == nil {
+		return nil, ErrFeedServiceNotInitialized
+	}
+	req.Scene = domainfeed.NormalizeScene(req.Scene)
+	if req.Scene == "" {
+		req.Scene = s.defaultScene
+	}
+
+	strategy, ok := s.strategies[req.Scene]
+	if !ok {
+		return nil, domainfeed.ErrUnsupportedScene
+	}
+	return strategy.List(ctx, req)
 }
 
 // GetTimelineFeed 查询时间线视频流，处理游标分页并生成下一页游标。
 func (s *Service) GetTimelineFeed(ctx context.Context, cursor string, limit int) (*TimelineFeedResult, error) {
-	if !s.ready() {
-		return nil, ErrFeedServiceNotInitialized
-	}
-	if limit < 0 {
-		return nil, domainfeed.ErrInvalidLimit
-	}
-	parsedCursor, err := parseTimelineCursor(cursor)
-	if err != nil {
-		return nil, err
-	}
-	limit = normalizeLimit(limit)
+	return s.GetFeed(ctx, FeedRequest{
+		Scene:  domainfeed.SceneTimeline,
+		Cursor: cursor,
+		Limit:  limit,
+	})
+}
 
-	items, err := s.repo.ListTimelineFeed(ctx, parsedCursor, limit+1)
-	if err != nil {
-		return nil, ErrLoadFeedFailed
+// NewTimelineStrategy 创建一个时间线排序策略，可作为 latest 等场景的基础实现。
+func NewTimelineStrategy(scene domainfeed.Scene, repo domainfeed.Repository) *TimelineStrategy {
+	return &TimelineStrategy{
+		scene: domainfeed.NormalizeScene(scene),
+		repo:  repo,
 	}
+}
 
-	hasMore := len(items) > limit
-	if hasMore {
-		items = items[:limit]
-	}
-
-	nextCursor := ""
-	if hasMore && len(items) > 0 {
-		nextCursor = encodeTimelineCursor(&domainfeed.TimelineCursor{
-			PublishedAt: items[len(items)-1].PublishedAt,
-			VideoID:     items[len(items)-1].VideoID,
-		})
-	}
-
-	return &TimelineFeedResult{
-		Items:      items,
-		NextCursor: nextCursor,
-		HasMore:    hasMore,
-	}, nil
+// Scene 返回当前策略绑定的 Feed 场景。
+func (s *TimelineStrategy) Scene() domainfeed.Scene {
+	return s.scene
 }
 
 // RefreshTimelineFeed 从时间线起点查询视频流，适用于刷新首页数据。
@@ -66,9 +94,46 @@ func (s *Service) RefreshTimelineFeed(ctx context.Context, limit int) (*Timeline
 	return s.GetTimelineFeed(ctx, "", limit)
 }
 
-// ready 判断服务及其信息流仓储依赖是否已初始化。
-func (s *Service) ready() bool {
-	return s != nil && s.repo != nil
+// List 使用 cursor+limit 读取时间线 Feed。
+func (s *TimelineStrategy) List(ctx context.Context, req FeedRequest) (*FeedResult, error) {
+	if s == nil || s.repo == nil {
+		return nil, ErrFeedServiceNotInitialized
+	}
+	if req.Limit < 0 {
+		return nil, domainfeed.ErrInvalidLimit
+	}
+	parsedCursor, err := parseTimelineCursor(req.Cursor)
+	if err != nil {
+		return nil, err
+	}
+	limit := normalizeLimit(req.Limit)
+
+	items, err := s.repo.ListTimelineFeed(ctx, parsedCursor, limit+1)
+	if err != nil {
+		return nil, ErrLoadFeedFailed
+	}
+
+	// limit+1 是常见分页技巧：多取一条即可判断后面还有没有数据。
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+
+	nextCursor := ""
+	if hasMore && len(items) > 0 {
+		// 下一页从当前页最后一个元素之后开始，游标保存排序所需的两个字段。
+		nextCursor = encodeTimelineCursor(&domainfeed.TimelineCursor{
+			PublishedAt: items[len(items)-1].PublishedAt,
+			VideoID:     items[len(items)-1].VideoID,
+		})
+	}
+
+	return &FeedResult{
+		Scene:      s.scene,
+		Items:      items,
+		NextCursor: nextCursor,
+		HasMore:    hasMore,
+	}, nil
 }
 
 // normalizeLimit 将零值分页数量转换为默认值，并限制最大返回数量。
