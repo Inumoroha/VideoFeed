@@ -148,6 +148,7 @@ func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandle
 	videos.DELETE("/:videoId", authMiddleware, videoHandler.Delete)
 
 	api.GET("/feed-items", feedHandler.Timeline)
+	api.POST("/feed/query", feedHandler.Query)
 
 	if interactionHandler != nil {
 		videos.PUT("/:videoId/like", authMiddleware, interactionHandler.Like)

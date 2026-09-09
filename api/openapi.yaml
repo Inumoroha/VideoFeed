@@ -401,6 +401,30 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/feed/query:
+    post:
+      tags:
+        - Feed
+      summary: Query a feed scene with contextual parameters
+      operationId: queryFeed
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedQueryRequest'
+      responses:
+        '200':
+          description: Feed page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/videos/{videoId}/like:
     parameters:
       - name: videoId
@@ -982,13 +1006,35 @@ components:
         items: []
         limit: 20
         offset: 0
+    FeedQueryRequest:
+      type: object
+      properties:
+        scene:
+          type: string
+          description: Feed scene; omitted value uses the default timeline scene.
+          enum: [timeline, recommend, following, hot]
+        cursor:
+          type: string
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        context:
+          type: object
+          additionalProperties:
+            type: string
+      additionalProperties: false
     FeedResponse:
       type: object
       required:
+        - scene
         - items
         - next_cursor
         - has_more
       properties:
+        scene:
+          type: string
+          example: timeline
         items:
           type: array
           items:
