@@ -112,6 +112,7 @@ func registerRelationRoutes(g *gin.Engine, jwtManager *authjwt.Manager, relation
 // registerRoutes 注册认证、用户、视频、互动、信息流和上传接口；互动处理器为空时跳过互动路由。
 func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandler *videohandler.Handler, feedHandler *feedhandler.Handler, uploadHandler *uploadhandler.Handler, jwtManager *authjwt.Manager, optionalHandlers ...any) {
 	authMiddleware := middleware.NewJWTAuthMiddleware(jwtManager)
+	optionalMiddleware := middleware.NewOptionalJWTAuth(jwtManager)
 	api := g.Group("/api")
 	var interactionHandler *interactionhandler.Handler
 	var relationHandler *relationhandler.Handler
@@ -147,8 +148,8 @@ func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandle
 	videos.GET("/:videoId", videoHandler.Get)
 	videos.DELETE("/:videoId", authMiddleware, videoHandler.Delete)
 
-	api.GET("/feed-items", feedHandler.Timeline)
-	api.POST("/feed/query", feedHandler.Query)
+	api.GET("/feed-items", optionalMiddleware, feedHandler.Timeline)
+	api.POST("/feed/query", optionalMiddleware, feedHandler.Query)
 
 	if interactionHandler != nil {
 		videos.PUT("/:videoId/like", authMiddleware, interactionHandler.Like)

@@ -85,6 +85,19 @@ func TestNewOptionalJWTAuthMiddlewareAllowsGuest(t *testing.T) {
 	}
 }
 
+// TestNewOptionalJWTAuthAllowsRequestWithNilManager 验证可选认证管理器为空时请求仍可作为访客继续执行。
+func TestNewOptionalJWTAuthAllowsRequestWithNilManager(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(recorder)
+	ginContext.Request = httptest.NewRequest(http.MethodGet, "/feed", nil)
+
+	NewOptionalJWTAuth(nil)(ginContext)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+}
+
 // TestNewOptionalJWTAuthMiddlewareSetsUserID 验证可选认证中间件识别合法令牌并写入用户 ID。
 func TestNewOptionalJWTAuthMiddlewareSetsUserID(t *testing.T) {
 	manager := newTestJWTManager(t)
