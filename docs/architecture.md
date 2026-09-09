@@ -4,7 +4,7 @@
 
 ## 1. 系统上下文
 
-这张图展示 GCFeed 与客户端、存储和演进型基础设施的边界。
+这张图展示 VideoFeed 与客户端、存储和演进型基础设施的边界。
 
 ```mermaid
 ---
@@ -20,7 +20,7 @@ config:
     clusterBorder: "#CBD5E1"
 ---
 flowchart LR
-  %% GCFeed MVP system context
+  %% VideoFeed MVP system context
   classDef client fill:#EFF6FF,stroke:#60A5FA,color:#0F172A,stroke-width:1px;
   classDef system fill:#DCFCE7,stroke:#22C55E,color:#0F172A,stroke-width:1px;
   classDef store fill:#F1F5F9,stroke:#64748B,color:#0F172A,stroke-width:1px;
@@ -28,7 +28,7 @@ flowchart LR
 
   Web["Web App<br/>React + Vite"]
   Client["移动端 / API 调用方"]
-  API["GCFeed API<br/>Go + Gin"]
+  API["VideoFeed API<br/>Go + Gin"]
   PostgreSQL[("PostgreSQL<br/>业务数据")]
   Uploads[("uploads<br/>视频 / 封面 / 头像")]
   Redis[("Redis<br/>缓存与计数")]
@@ -224,6 +224,11 @@ erDiagram
   VIDEOS ||--o{ INTERACTION_COMMENT : "接收评论"
   USERS ||--o{ INTERACTION_ACTION_IDEMPOTENCY : "保存请求结果"
   VIDEOS ||--o{ INTERACTION_ACTION_IDEMPOTENCY : "关联请求视频"
+  USERS ||--o{ USER_FOLLOW : "发起关注"
+  USERS ||--o{ USER_FOLLOW : "接收关注"
+  USERS ||--|| USER_RELATION_STAT : "拥有关系统计"
+  USERS ||--o{ USER_FOLLOW_IDEMPOTENCY : "保存关注请求结果"
+  USER_FOLLOW ||--o{ USER_FOLLOW_IDEMPOTENCY : "关联首次结果"
 
   USERS {
     bigint id PK
@@ -283,6 +288,35 @@ erDiagram
     int status
     string idempotency_key
     datetime created_at
+  }
+
+  USER_FOLLOW {
+    bigint id PK
+    bigint user_id
+    bigint target_user_id
+    int status
+    string idempotency_key
+    datetime created_at
+    datetime updated_at
+  }
+
+  USER_RELATION_STAT {
+    bigint user_id PK
+    int following_count
+    int follower_count
+  }
+
+  USER_FOLLOW_IDEMPOTENCY {
+    bigint id PK
+    bigint user_id
+    string idempotency_key
+    bigint target_user_id
+    bigint follow_id
+    boolean active
+    int user_following_count
+    int user_follower_count
+    int target_following_count
+    int target_follower_count
   }
 ```
 
@@ -344,8 +378,8 @@ flowchart TB
 
 ## 6. 说明
 
-- 当前代码以 Go API 单体承载用户、视频、Feed、互动与上传能力，内部按接口层、应用层、领域层、基础设施层组织。
+- 当前代码以 Go API 单体承载用户、视频、Feed、互动与上传能力，并具备关系数据持久化，内部按接口层、应用层、领域层、基础设施层组织。
 - 业务接口统一挂载在 `/api/*`；点赞和收藏使用 `/api/videos/:videoId/like`、`/api/videos/:videoId/favorite`，评论使用 `/api/videos/:videoId/comments` 和 `/api/comments/:commentId`。静态文件通过 `/uploads/*` 访问，健康检查使用 `/health`。
-- 数据持久化使用 PostgreSQL，GORM 自动迁移 `users`、`videos`、`video_stat`、`interaction_action`、`interaction_action_idempotency` 与 `interaction_comment` 表。
+- 数据持久化使用 PostgreSQL，GORM 自动迁移 `users`、`videos`、`video_stat`、`interaction_action`、`interaction_action_idempotency`、`interaction_comment`、`user_follow`、`user_relation_stat` 与 `user_follow_idempotency` 表。
 - Feed 当前采用 Timeline 策略，按 `published_at DESC, id DESC` 排序，并通过 Base64 游标分页。
 - 推荐、审核、消息、治理和监控模块作为演进边界保留；已落地的互动模块后续可接入异步事件和独立服务。
