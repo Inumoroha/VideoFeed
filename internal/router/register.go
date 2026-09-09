@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	applicationfeed "github.com/inumoroha/video-feed/internal/application/feed"
 	applicationinteraction "github.com/inumoroha/video-feed/internal/application/interaction"
+	applicationrelation "github.com/inumoroha/video-feed/internal/application/relation"
 	applicationuser "github.com/inumoroha/video-feed/internal/application/user"
 	applicationvideo "github.com/inumoroha/video-feed/internal/application/video"
 	authjwt "github.com/inumoroha/video-feed/internal/auth/jwt"
@@ -14,12 +15,14 @@ import (
 	"github.com/inumoroha/video-feed/internal/handler"
 	feedhandler "github.com/inumoroha/video-feed/internal/handler/feed"
 	interactionhandler "github.com/inumoroha/video-feed/internal/handler/interaction"
+	relationhandler "github.com/inumoroha/video-feed/internal/handler/relation"
 	uploadhandler "github.com/inumoroha/video-feed/internal/handler/upload"
 	userhandler "github.com/inumoroha/video-feed/internal/handler/user"
 	videohandler "github.com/inumoroha/video-feed/internal/handler/video"
 
 	feedpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/feed"
 	interactionpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/interaction"
+	relationpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/relation"
 	userpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/user"
 	videopersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/video"
 	"github.com/inumoroha/video-feed/internal/middleware"
@@ -51,6 +54,9 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	if err := gormDB.AutoMigrate(&interactionpersistence.ActionModel{}, &interactionpersistence.ActionIdempotencyModel{}, &interactionpersistence.CommentModel{}); err != nil {
 		return fmt.Errorf("migrate interactions: %w", err)
 	}
+	if err := gormDB.AutoMigrate(&relationpersistence.FollowModel{}, &relationpersistence.RelationStatModel{}, &relationpersistence.FollowIdempotencyModel{}); err != nil {
+		return fmt.Errorf("migrate relations: %w", err)
+	}
 	if err := videopersistence.EnsureStats(gormDB); err != nil {
 		return fmt.Errorf("ensure video stats: %w", err)
 	}
@@ -72,6 +78,9 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	interactionRepository := interactionpersistence.New(gormDB)
 	interactionService := applicationinteraction.NewService(interactionRepository)
 	interactionHandler := interactionhandler.NewHandler(interactionService)
+	relationRepository := relationpersistence.New(gormDB)
+	relationService := applicationrelation.NewService(relationRepository)
+	relationHandler := relationhandler.NewHandler(relationService)
 	uploadRoot, err := filepath.Abs("./uploads")
 	if err != nil {
 		return fmt.Errorf("resolve upload directory: %w", err)
@@ -80,15 +89,40 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	g.GET("/health", handler.Health)
 	g.Static("/uploads", uploadRoot)
 
-	registerRoutes(g, userHandler, videoHandler, feedHandler, uploadHandler, jwtManager, interactionHandler)
+	registerRoutes(g, userHandler, videoHandler, feedHandler, uploadHandler, jwtManager, interactionHandler, relationHandler)
+	registerRelationRoutes(g, jwtManager, relationHandler)
 
 	return nil
 }
 
-// registerRoutes 注册认证、用户、视频、互动、信息流和上传接口；互动处理器为空时跳过互动路由。
-func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandler *videohandler.Handler, feedHandler *feedhandler.Handler, uploadHandler *uploadhandler.Handler, jwtManager *authjwt.Manager, interactionHandlers ...*interactionhandler.Handler) {
+// registerRelationRoutes 注册需要认证的关注、取关和关系列表接口。
+func registerRelationRoutes(g *gin.Engine, jwtManager *authjwt.Manager, relationHandler *relationhandler.Handler) {
+	if relationHandler == nil {
+		return
+	}
 	authMiddleware := middleware.NewJWTAuthMiddleware(jwtManager)
 	api := g.Group("/api")
+	relations := api.Group("/relations", authMiddleware)
+	relations.PUT("/:targetUserId", relationHandler.Follow)
+	relations.DELETE("/:targetUserId", relationHandler.Unfollow)
+	relations.GET("/following", relationHandler.ListFollowing)
+	relations.GET("/followers", relationHandler.ListFollowers)
+}
+
+// registerRoutes 注册认证、用户、视频、互动、信息流和上传接口；互动处理器为空时跳过互动路由。
+func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandler *videohandler.Handler, feedHandler *feedhandler.Handler, uploadHandler *uploadhandler.Handler, jwtManager *authjwt.Manager, optionalHandlers ...any) {
+	authMiddleware := middleware.NewJWTAuthMiddleware(jwtManager)
+	api := g.Group("/api")
+	var interactionHandler *interactionhandler.Handler
+	var relationHandler *relationhandler.Handler
+	for _, handler := range optionalHandlers {
+		switch value := handler.(type) {
+		case *interactionhandler.Handler:
+			interactionHandler = value
+		case *relationhandler.Handler:
+			relationHandler = value
+		}
+	}
 
 	sessions := api.Group("/sessions")
 	sessions.POST("", userHandler.Login)
@@ -101,6 +135,12 @@ func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandle
 	users.GET("/:userId", userHandler.Get)
 	users.GET("/me/videos", authMiddleware, videoHandler.ListMine)
 	users.GET("/:userId/videos", videoHandler.ListByAuthor)
+	if relationHandler != nil {
+		users.PUT("/me/following/:targetUserId", authMiddleware, relationHandler.Follow)
+		users.DELETE("/me/following/:targetUserId", authMiddleware, relationHandler.Unfollow)
+		users.GET("/me/following", authMiddleware, relationHandler.ListFollowing)
+		users.GET("/me/followers", authMiddleware, relationHandler.ListFollowers)
+	}
 
 	videos := api.Group("/videos")
 	videos.POST("", authMiddleware, videoHandler.Create)
@@ -109,8 +149,7 @@ func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandle
 
 	api.GET("/feed-items", feedHandler.Timeline)
 
-	if len(interactionHandlers) > 0 && interactionHandlers[0] != nil {
-		interactionHandler := interactionHandlers[0]
+	if interactionHandler != nil {
 		videos.PUT("/:videoId/like", authMiddleware, interactionHandler.Like)
 		videos.DELETE("/:videoId/like", authMiddleware, interactionHandler.Unlike)
 		videos.PUT("/:videoId/favorite", authMiddleware, interactionHandler.Favorite)
