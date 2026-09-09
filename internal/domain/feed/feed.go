@@ -7,7 +7,17 @@ import (
 
 const MaxLimit = 100
 
+// Scene 表示不同 Feed 场景，应用层通过场景选择对应策略。
+type Scene string
 
+const (
+	SceneTimeline  Scene = "timeline"
+	SceneRecommend Scene = "recommend"
+	SceneFollowing Scene = "following"
+	SceneHot       Scene = "hot"
+
+	DefaultScene = SceneTimeline
+)
 
 // FeedItem 时间线视频项领域对象。
 // 它包含了视频的基本信息，如视频ID、作者ID、标题、媒体URL、封面URL、点赞数、评论数、收藏数、发布时间等。
@@ -31,6 +41,15 @@ type FeedItem struct {
 type TimelineCursor struct {
 	PublishedAt time.Time
 	VideoID     int64
+}
+
+// NormalizeScene 统一 scene 参数格式，空值使用默认 Feed 场景。
+func NormalizeScene(scene Scene) Scene {
+	value := strings.TrimSpace(strings.ToLower(string(scene)))
+	if value == "" {
+		return DefaultScene
+	}
+	return Scene(value)
 }
 
 // RestoreFeedItem 根据持久化数据恢复信息流条目领域对象。
