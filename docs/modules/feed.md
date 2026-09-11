@@ -39,3 +39,34 @@ hot_score = like_count * 3 + comment_count * 5 + favorite_count * 4
 ## 3. 数据表设计（最小实现）
 
 Feed 依赖已有 `videos`、`users` 和 `video_stat` 表：`videos` 保存视频内容、作者 ID、发布状态和发布时间；`users` 提供作者昵称和头像；`video_stat` 提供互动计数。查询只返回已发布且 `published_at` 不为空的视频，不额外维护 Feed 专用数据表。
+
+## 4. Timeline 访问优化
+
+### 4.1 数据库索引
+
+时间线查询只读取已发布视频，并按发布时间和视频 ID 倒序排列。项目通过 GORM 在 `videos` 表上维护复合索引 `idx_video_timeline`，对应以下查询路径：
+
+```sql
+CREATE INDEX idx_video_timeline
+ON videos (status, published_at DESC, id DESC);
+```
+
+其中 `status` 用于过滤发布状态，`published_at` 和 `id` 与排序及游标分页条件保持一致；`id` 作为同一发布时间下的稳定排序字段。
+
+### 4.2 Redis 读缓存
+
+路由装配时，配置了 Redis 地址便为 `scene=timeline` 启用读缓存。缓存保存完整的时间线分页结果，缓存命中时直接返回；未命中或读取异常时回源 PostgreSQL。查询成功后尝试写入缓存，写入失败仍返回已取得的结果，不会再次查询数据库；数据库查询失败仍返回错误。
+
+| 缓存页 | 有效期 |
+| --- | --- |
+| 首页（无游标） | 5 秒，并增加按缓存键计算的 10% 至 20% 抖动 |
+| 后续页（带游标） | 45 秒，并增加按缓存键计算的 10% 至 20% 抖动 |
+
+缓存键包含页大小，后续页使用游标的 SHA-1 摘要，避免把完整游标直接放入键名：
+
+```text
+feed:timeline:v1:limit:{limit}:first
+feed:timeline:v1:limit:{limit}:cursor:{sha1(cursor)}
+```
+
+同一进程内，同一缓存键的并发回源请求通过 `singleflight` 合并为一次查询。共享查询使用独立的 5 秒超时；单个 HTTP 请求取消时只结束自身等待，不会取消其他请求或共享回源查询。
