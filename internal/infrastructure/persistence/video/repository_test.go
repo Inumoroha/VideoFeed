@@ -117,8 +117,22 @@ func TestVideoModelUsesCompatibleDescriptionConstraint(t *testing.T) {
 	}
 }
 
-// newMockRepository 创建使用 SQL mock 的 PostgreSQL 视频仓储。
-func newMockRepository(t *testing.T) (*Repository, sqlmock.Sqlmock) {
+// TestVideoModelTimelineIndexUsesDescendingOrder 验证 timeline 索引以 PostgreSQL 可识别的降序定义交由 AutoMigrate 创建。
+func TestVideoModelTimelineIndexUsesDescendingOrder(t *testing.T) {
+	db, mock := newMockGormDB(t)
+	mock.ExpectExec(regexp.QuoteMeta(`CREATE INDEX IF NOT EXISTS "idx_video_timeline" ON "videos" ("status","published_at" desc,"id" desc)`)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	if err := db.Migrator().CreateIndex(&VideoModel{}, "idx_video_timeline"); err != nil {
+		t.Fatalf("CreateIndex() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations were not met: %v", err)
+	}
+}
+
+// newMockGormDB 创建使用 SQL mock 的 PostgreSQL GORM 数据库实例。
+func newMockGormDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	sqlDB, mock, err := sqlmock.New()
 	if err != nil {
@@ -131,5 +145,12 @@ func newMockRepository(t *testing.T) (*Repository, sqlmock.Sqlmock) {
 	if err != nil {
 		t.Fatalf("gorm.Open() error = %v", err)
 	}
+	return db, mock
+}
+
+// newMockRepository 创建使用 SQL mock 的 PostgreSQL 视频仓储。
+func newMockRepository(t *testing.T) (*Repository, sqlmock.Sqlmock) {
+	t.Helper()
+	db, mock := newMockGormDB(t)
 	return New(db), mock
 }
