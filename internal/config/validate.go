@@ -22,6 +22,9 @@ func validateConfig(cfg *Config) error {
 	if err := validateAuthConfig(&cfg.Auth); err != nil {
 		return err
 	}
+	if err := validateRedisConfig(&cfg.Redis); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -69,6 +72,17 @@ func validateDatabaseConfig(cfg *DatabaseConfig) error {
 func validateAuthConfig(cfg *AuthConfig) error {
 	if err := validateJWTConfig(&cfg.JWT); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateRedisConfig 校验 Redis 地址和数据库编号是否合法。
+func validateRedisConfig(cfg *RedisConfig) error {
+	if strings.TrimSpace(cfg.Addr) == "" {
+		return fmt.Errorf("redis.addr is empty")
+	}
+	if cfg.DB < 0 {
+		return fmt.Errorf("redis.db must be non-negative")
 	}
 	return nil
 }

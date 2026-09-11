@@ -2,11 +2,13 @@ package config
 
 import "time"
 
+// Config 保存应用运行所需的全部配置项。
 type Config struct {
 	App      AppConfig      `mapstructure:"app"`
 	Server   ServerConfig   `mapstructure:"server"`
 	Database DatabaseConfig `mapstructure:"database"`
 	Auth     AuthConfig     `mapstructure:"auth"`
+	Redis    RedisConfig    `mapstructure:"redis"`
 }
 
 // AppConfig 是应用配置结构体
@@ -43,4 +45,11 @@ type JWTConfig struct {
 	Secret     string        `mapstructure:"secret"`
 	AccessTTL  time.Duration `mapstructure:"access_ttl"`
 	RefreshTTL time.Duration `mapstructure:"refresh_ttl"`
+}
+
+// RedisConfig 保存 Redis 服务的连接地址、认证密码和数据库编号。
+type RedisConfig struct {
+	Addr     string `mapstructure:"addr"`
+	Password string `mapstructure:"password"`
+	DB       int    `mapstructure:"db"`
 }

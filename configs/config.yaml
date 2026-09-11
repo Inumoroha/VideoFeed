@@ -21,3 +21,7 @@ auth:
         secret: "${JWT_SECRET}"
         access_ttl: "15m"
         refresh_ttl: "168h"
+redis:
+    addr: "localhost:6379"
+    password: ""
+    db: 0
