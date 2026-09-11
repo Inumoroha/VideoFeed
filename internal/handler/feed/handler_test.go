@@ -25,6 +25,11 @@ func (r *handlerTestRepository) ListTimelineFeed(_ context.Context, _ *domainfee
 	return r.items, r.err
 }
 
+// ListHotFeed 返回测试热榜信息流或预设错误。
+func (r *handlerTestRepository) ListHotFeed(_ context.Context, _ *domainfeed.HotCursor, _ int) ([]*domainfeed.FeedItem, error) {
+	return r.items, r.err
+}
+
 // TestTimelineWithNilServiceReturnsInternalServerError 验证信息流服务未初始化时返回服务器错误。
 func TestTimelineWithNilServiceReturnsInternalServerError(t *testing.T) {
 	recorder := httptest.NewRecorder()
