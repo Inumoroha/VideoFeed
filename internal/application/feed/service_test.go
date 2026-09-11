@@ -29,6 +29,11 @@ func (r *serviceTestRepository) ListTimelineFeed(_ context.Context, cursor *doma
 	return r.items, r.err
 }
 
+// ListHotFeed 返回测试热榜信息流。
+func (r *serviceTestRepository) ListHotFeed(_ context.Context, _ *domainfeed.HotCursor, _ int) ([]*domainfeed.FeedItem, error) {
+	return r.items, r.err
+}
+
 // TestServiceRejectsUninitializedService 验证未初始化服务不会触发空指针异常。
 func TestServiceRejectsUninitializedService(t *testing.T) {
 	var service *Service

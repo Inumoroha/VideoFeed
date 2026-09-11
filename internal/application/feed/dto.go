@@ -43,3 +43,15 @@ type TimelineStrategy struct {
 	scene domainfeed.Scene
 	repo  domainfeed.Repository
 }
+
+// HotStrategy 使用互动热度读取热榜 Feed。
+type HotStrategy struct {
+	repo domainfeed.Repository
+}
+
+// hotCursorPayload 表示热榜游标的编码载荷。
+type hotCursorPayload struct {
+	HotScore    int    `json:"hot_score"`
+	PublishedAt string `json:"published_at"`
+	VideoID     int64  `json:"video_id"`
+}
