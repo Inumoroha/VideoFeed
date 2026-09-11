@@ -42,6 +42,17 @@ func New(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
 
+// EnsureTimelineIndex 在 videos 表上创建 timeline 回源查询所需的复合索引，索引已存在时直接跳过。
+func EnsureTimelineIndex(db *gorm.DB) error {
+	if db == nil {
+		return errors.New("gorm database is nil")
+	}
+
+	return db.Exec(
+		"CREATE INDEX IF NOT EXISTS idx_video_timeline ON videos (status, published_at DESC, id DESC)",
+	).Error
+}
+
 // ListTimelineFeed 按发布时间和视频 ID 倒序分页查询已发布视频流。
 func (r *Repository) ListTimelineFeed(ctx context.Context, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedItem, error) {
 	if r == nil || r.db == nil {
