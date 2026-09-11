@@ -2,47 +2,40 @@
 
 ## 1. 模块职责
 
-负责刷视频主链路，按发布时间和视频 ID 倒序分页输出已发布视频。
+负责刷视频主链路，输出游标分页结果并记录观看行为。当前最小实现提供已上线视频的时间线和热榜读取能力。
 
-## 2. 接口设计
+## 2. 接口设计（最小实现）
 
-| 方法 | 接口路径             | 作用                       | 鉴权   |
-| ---- | -------------------- | -------------------------- | ------ |
-| GET  | `/api/feed-items` | 获取按发布时间排序的视频流 | 可匿名 |
+| 方法 | 接口路径 | 作用 | 鉴权 | 幂等键 |
+| --- | --- | --- | --- | --- |
+| GET | `/api/feed-items` | 获取按 scene 排序的视频流 | 可匿名 | - |
 
-### 2.1 时间线信息流
+### 2.1 Feed Items API
 
-`GET /api/feed-items` 查询状态为已发布且已设置发布时间的视频，排序为 `published_at DESC, id DESC`。
+`GET /api/feed-items` 支持 `cursor`、`limit` 和 `scene` 查询参数。`limit` 默认 10，最大 100，非正数返回 400；`scene` 默认 `timeline`，可选 `timeline`、`hot`。
 
-`limit` 为可选查询参数，省略时默认返回 20 条，最大返回 100 条；传入非正数时返回 `400`。`cursor` 为上一页响应中的 `next_cursor`，无游标时从时间线起点查询。
+| 参数 | 位置 | 类型 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| `cursor` | query | string | 否 | - | 上一页返回的游标 |
+| `limit` | query | int | 否 | 10 | 返回数量，最大 100 |
+| `scene` | query | string | 否 | `timeline` | Feed 场景：`timeline`、`hot` |
 
-游标是 URL 安全的 Base64 编码字符串，载荷包含当前页末尾视频的发布时间和视频 ID。服务不会持久化游标，也不设置过期时间；无法解析或字段无效的游标返回 `400`。有下一页时返回 `next_cursor`，没有下一页时为空字符串。
+响应包含 `scene`、`items`、`next_cursor` 和 `has_more`。游标使用 URL 安全的 Base64 编码；无下一页时 `next_cursor` 为空字符串，非法游标返回 400。
 
-响应为 `items`、`next_cursor` 和 `has_more`：
+### 2.2 排序规则
 
-```json
-{
-    "items": [
-        {
-            "video_id": 1001,
-            "author_id": 12,
-            "author_nickname": "作者昵称",
-            "author_avatar_url": "https://example.com/avatar.png",
-            "title": "first video",
-            "description": "first video description",
-            "media_url": "https://example.com/video.mp4",
-            "cover_url": "https://example.com/cover.jpg",
-            "like_count": 0,
-            "comment_count": 0,
-            "favorite_count": 0,
-            "published_at": "2026-05-03T12:00:00Z"
-        }
-    ],
-    "next_cursor": "eyJwdWJsaXNoZWRfYXQiOiIyMDI2LTA1LTAzVDEyOjAwOjAwWiIsInZpZGVvX2lkIjoxMDAxfQ",
-    "has_more": true
-}
+`scene=timeline` 按 `published_at DESC`、`id DESC` 排序。
+
+`scene=hot` 按 `hot_score DESC`、`published_at DESC`、`id DESC` 排序，其中：
+
+```text
+hot_score = like_count * 3 + comment_count * 5 + favorite_count * 4
 ```
 
-## 3. 数据来源
+### 2.3 游标内容
 
-信息流仓储读取 `videos` 表，通过 `author_id` 关联 `users` 表获取作者昵称和头像，并通过 `video_id` 关联 `video_stat` 表获取互动统计。仅返回 `status` 为已发布且 `published_at` 不为空的视频，不额外维护信息流专用数据表。
+时间线游标包含 `published_at` 和 `video_id`；热榜游标包含 `hot_score`、`published_at` 和 `video_id`，均取当前页最后一条视频的对应字段。
+
+## 3. 数据表设计（最小实现）
+
+Feed 依赖已有 `videos`、`users` 和 `video_stat` 表：`videos` 保存视频内容、作者 ID、发布状态和发布时间；`users` 提供作者昵称和头像；`video_stat` 提供互动计数。查询只返回已发布且 `published_at` 不为空的视频，不额外维护 Feed 专用数据表。

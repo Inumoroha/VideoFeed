@@ -4,7 +4,7 @@
 
 ## 1. 系统上下文
 
-这张图展示 VideoFeed 与客户端、存储和演进型基础设施的边界。
+这张图展示 GCFeed 与客户端、存储和演进型基础设施的边界。
 
 ```mermaid
 ---
@@ -20,7 +20,7 @@ config:
     clusterBorder: "#CBD5E1"
 ---
 flowchart LR
-  %% VideoFeed MVP system context
+  %% GCFeed MVP system context
   classDef client fill:#EFF6FF,stroke:#60A5FA,color:#0F172A,stroke-width:1px;
   classDef system fill:#DCFCE7,stroke:#22C55E,color:#0F172A,stroke-width:1px;
   classDef store fill:#F1F5F9,stroke:#64748B,color:#0F172A,stroke-width:1px;
@@ -28,8 +28,8 @@ flowchart LR
 
   Web["Web App<br/>React + Vite"]
   Client["移动端 / API 调用方"]
-  API["VideoFeed API<br/>Go + Gin"]
-  PostgreSQL[("PostgreSQL<br/>业务数据")]
+  API["GCFeed API<br/>Go + Gin"]
+  MySQL[("MySQL<br/>业务数据")]
   Uploads[("uploads<br/>视频 / 封面 / 头像")]
   Redis[("Redis<br/>缓存与计数")]
   MQ[("MQ<br/>异步事件")]
@@ -37,7 +37,7 @@ flowchart LR
 
   Web -->|"调用管理与浏览接口"| API
   Client -->|"调用公开 API"| API
-  API -->|"读写 users / videos / video_stat / interaction_*"| PostgreSQL
+  API -->|"读写 users / videos / video_stat / interaction_*"| MySQL
   API -->|"保存和读取本地文件"| Uploads
   API -.->|"缓存 Feed 与计数"| Redis
   API -.->|"投递互动和审核事件"| MQ
@@ -45,7 +45,7 @@ flowchart LR
 
   class Web,Client client;
   class API system;
-  class PostgreSQL,Uploads store;
+  class MySQL,Uploads store;
   class Redis,MQ,ObjectStorage future;
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
 ```
@@ -85,8 +85,8 @@ flowchart LR
   Config["Config Loader<br/>configs/config.yaml"]
   JWT["JWT Manager<br/>签发访问令牌"]
   Repo["GORM Repository<br/>仓储实现"]
-  SQL["GORM / database/sql<br/>PostgreSQL 连接池"]
-  PostgreSQL[("PostgreSQL")]
+  SQL["database/sql<br/>MySQL 连接"]
+  MySQL[("MySQL")]
   Uploads[("uploads 目录")]
 
   Entry -->|"加载配置"| Config
@@ -99,7 +99,7 @@ flowchart LR
   Services -->|"执行领域规则"| Domains
   Services -->|"读写仓储"| Repo
   Repo -->|"复用连接池"| SQL
-  SQL -->|"持久化数据"| PostgreSQL
+  SQL -->|"持久化数据"| MySQL
   Handlers -->|"保存上传文件"| Uploads
   Router -->|"暴露静态文件"| Uploads
 
@@ -108,13 +108,13 @@ flowchart LR
   class Services service;
   class Domains domain;
   class Config,JWT,Repo,SQL infra;
-  class PostgreSQL,Uploads store;
+  class MySQL,Uploads store;
   linkStyle default stroke:#94A3B8,stroke-width:1.4px
 ```
 
 ## 3. 核心请求链路
 
-这张图展示注册、登录、上传、发布、刷 Feed 与互动的核心请求链路。上传、发布、点赞、收藏、创建评论和删除评论请求都需要携带 Bearer JWT。
+这张图展示注册、登录、上传、发布、刷 Feed 与互动的核心请求链路。上传、发布和互动请求都需要携带 Bearer JWT。
 
 ```mermaid
 ---
@@ -139,7 +139,7 @@ sequenceDiagram
   participant H as Handler
   participant S as Service
   participant Repo as GORM Repository
-  participant DB as PostgreSQL
+  participant DB as MySQL
   participant FS as uploads
   participant Auth as JWT Middleware
 
@@ -190,13 +190,12 @@ sequenceDiagram
   S-->>H: 返回 items + next_cursor + has_more
   H-->>C: 返回 Timeline Feed
 
-  Note over C,R: PUT 激活点赞，DELETE 取消点赞；收藏接口语义相同
-  C->>R: PUT /api/videos/{videoId}/like (Bearer JWT)
+  C->>R: POST /api/interactions/like (Bearer JWT)
   R->>Auth: 校验访问令牌
-  Auth->>H: Interaction.Like（用户上下文）
-  H->>S: 显式设置点赞状态
-  S->>Repo: 设置动作状态、维护幂等结果和统计快照
-  Repo->>DB: INSERT/UPDATE interaction_*, video_stat
+  Auth->>H: Interaction.ToggleLike（用户上下文）
+  H->>S: 切换点赞状态
+  S->>Repo: 写入互动动作并刷新计数
+  Repo->>DB: UPDATE interaction_action, video_stat
   S-->>H: 返回点赞状态与统计
   H-->>C: 200 OK
 ```
@@ -224,11 +223,6 @@ erDiagram
   VIDEOS ||--o{ INTERACTION_COMMENT : "接收评论"
   USERS ||--o{ INTERACTION_ACTION_IDEMPOTENCY : "保存请求结果"
   VIDEOS ||--o{ INTERACTION_ACTION_IDEMPOTENCY : "关联请求视频"
-  USERS ||--o{ USER_FOLLOW : "发起关注"
-  USERS ||--o{ USER_FOLLOW : "接收关注"
-  USERS ||--|| USER_RELATION_STAT : "拥有关系统计"
-  USERS ||--o{ USER_FOLLOW_IDEMPOTENCY : "保存关注请求结果"
-  USER_FOLLOW ||--o{ USER_FOLLOW_IDEMPOTENCY : "关联首次结果"
 
   USERS {
     bigint id PK
@@ -288,35 +282,6 @@ erDiagram
     int status
     string idempotency_key
     datetime created_at
-  }
-
-  USER_FOLLOW {
-    bigint id PK
-    bigint user_id
-    bigint target_user_id
-    int status
-    string idempotency_key
-    datetime created_at
-    datetime updated_at
-  }
-
-  USER_RELATION_STAT {
-    bigint user_id PK
-    int following_count
-    int follower_count
-  }
-
-  USER_FOLLOW_IDEMPOTENCY {
-    bigint id PK
-    bigint user_id
-    string idempotency_key
-    bigint target_user_id
-    bigint follow_id
-    boolean active
-    int user_following_count
-    int user_follower_count
-    int target_following_count
-    int target_follower_count
   }
 ```
 
@@ -378,8 +343,8 @@ flowchart TB
 
 ## 6. 说明
 
-- 当前代码以 Go API 单体承载用户、视频、Feed、互动与上传能力，并具备关系数据持久化，内部按接口层、应用层、领域层、基础设施层组织。
-- 业务接口统一挂载在 `/api/*`；点赞和收藏使用 `/api/videos/:videoId/like`、`/api/videos/:videoId/favorite`，评论使用 `/api/videos/:videoId/comments` 和 `/api/comments/:commentId`。静态文件通过 `/uploads/*` 访问，健康检查使用 `/health`。
-- 数据持久化使用 PostgreSQL，GORM 自动迁移 `users`、`videos`、`video_stat`、`interaction_action`、`interaction_action_idempotency`、`interaction_comment`、`user_follow`、`user_relation_stat` 与 `user_follow_idempotency` 表。
+- 当前代码以 Go API 单体承载用户、视频、Feed、互动与上传能力，内部按接口层、应用层、领域层、基础设施层组织。
+- 业务接口统一挂载在 `/api/*`；互动接口为 `/api/interactions/*` 与 `/api/comments`。静态文件通过 `/uploads/*` 访问，健康检查使用 `/health`。
+- 数据持久化使用 MySQL，GORM 自动迁移 `users`、`videos`、`video_stat`、`interaction_action`、`interaction_action_idempotency` 与 `interaction_comment` 表。
 - Feed 当前采用 Timeline 策略，按 `published_at DESC, id DESC` 排序，并通过 Base64 游标分页。
 - 推荐、审核、消息、治理和监控模块作为演进边界保留；已落地的互动模块后续可接入异步事件和独立服务。
