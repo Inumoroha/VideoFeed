@@ -2,8 +2,12 @@ package feed
 
 import (
 	"context"
+	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"hash/fnv"
 	"strings"
 	"time"
 
@@ -11,6 +15,9 @@ import (
 )
 
 const defaultFeedLimit = 10
+const timelineFirstPageCacheTTL = 5 * time.Second
+const timelinePageCacheTTL = 45 * time.Second
+const timelineLoadTimeout = 5 * time.Second
 
 // Service 通过 scene 策略注册表分发不同 Feed 场景。
 type Service struct {
@@ -25,6 +32,16 @@ type Option func(*Service)
 func WithStrategy(strategy Strategy) Option {
 	return func(s *Service) {
 		s.RegisterStrategy(strategy)
+	}
+}
+
+// WithTimelineCache 为时间线 Feed 启用读缓存。
+func WithTimelineCache(cache FeedCache) Option {
+	return func(s *Service) {
+		strategy, ok := s.strategies[domainfeed.SceneTimeline].(*TimelineStrategy)
+		if ok {
+			strategy.cache = cache
+		}
 	}
 }
 
@@ -80,8 +97,10 @@ func (s *Service) GetTimelineFeed(ctx context.Context, cursor string, limit int)
 // NewTimelineStrategy 创建一个时间线排序策略，可作为 latest 等场景的基础实现。
 func NewTimelineStrategy(scene domainfeed.Scene, repo domainfeed.Repository) *TimelineStrategy {
 	return &TimelineStrategy{
-		scene: domainfeed.NormalizeScene(scene),
-		repo:  repo,
+		scene:        domainfeed.NormalizeScene(scene),
+		repo:         repo,
+		firstPageTTL: timelineFirstPageCacheTTL,
+		pageTTL:      timelinePageCacheTTL,
 	}
 }
 
@@ -147,7 +166,7 @@ func (s *Service) RefreshTimelineFeed(ctx context.Context, limit int) (*Timeline
 	return s.GetTimelineFeed(ctx, "", limit)
 }
 
-// List 使用 cursor+limit 读取时间线 Feed。
+// List 分页读取时间线并按缓存键合并查询；共享查询独立限时，各请求可单独取消等待。
 func (s *TimelineStrategy) List(ctx context.Context, req FeedRequest) (*FeedResult, error) {
 	if s == nil || s.repo == nil {
 		return nil, ErrFeedServiceNotInitialized
@@ -161,6 +180,51 @@ func (s *TimelineStrategy) List(ctx context.Context, req FeedRequest) (*FeedResu
 	}
 	limit := normalizeLimit(req.Limit)
 
+	if s.cache == nil {
+		return s.listFromRepo(ctx, parsedCursor, limit)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	cacheKey := timelineCacheKey(req.Cursor, limit)
+	if result, ok, err := s.cache.Get(ctx, cacheKey); err == nil && ok {
+		return result, nil
+	}
+
+	resultCh := s.group.DoChan(cacheKey, func() (any, error) {
+		loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timelineLoadTimeout)
+		defer cancel()
+		if result, ok, err := s.cache.Get(loadCtx, cacheKey); err == nil && ok {
+			return result, nil
+		}
+		result, err := s.listFromRepo(loadCtx, parsedCursor, limit)
+		if err != nil {
+			return nil, err
+		}
+		_ = s.cache.Set(loadCtx, cacheKey, result, timelineCacheTTL(req.Cursor, cacheKey, s.firstPageTTL, s.pageTTL))
+		return result, nil
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case shared := <-resultCh:
+		if shared.Err != nil {
+			return nil, shared.Err
+		}
+		result, ok := shared.Val.(*FeedResult)
+		if !ok {
+			return nil, ErrLoadFeedFailed
+		}
+		return result, nil
+	}
+}
+
+// listFromRepo 多查一条时间线记录以判断是否还有下一页，并生成游标。
+func (s *TimelineStrategy) listFromRepo(ctx context.Context, parsedCursor *domainfeed.TimelineCursor, limit int) (*FeedResult, error) {
 	items, err := s.repo.ListTimelineFeed(ctx, parsedCursor, limit+1)
 	if err != nil {
 		return nil, ErrLoadFeedFailed
@@ -200,6 +264,33 @@ func normalizeLimit(limit int) int {
 	return limit
 }
 
+// timelineCacheKey 根据游标和分页数量生成时间线缓存键。
+func timelineCacheKey(cursor string, limit int) string {
+	cursor = strings.TrimSpace(cursor)
+	if cursor == "" {
+		return fmt.Sprintf("feed:timeline:v1:limit:%d:first", limit)
+	}
+
+	sum := sha1.Sum([]byte(cursor))
+	return fmt.Sprintf("feed:timeline:v1:limit:%d:cursor:%s", limit, hex.EncodeToString(sum[:]))
+}
+
+// timelineCacheTTL 区分首页与后续页，为正有效期增加由缓存键决定的百分之十至二十的偏移。
+func timelineCacheTTL(cursor string, cacheKey string, firstPageTTL time.Duration, pageTTL time.Duration) time.Duration {
+	ttl := pageTTL
+	if strings.TrimSpace(cursor) == "" {
+		ttl = firstPageTTL
+	}
+	if ttl <= 0 {
+		return 0
+	}
+
+	hasher := fnv.New32a()
+	_, _ = hasher.Write([]byte(cacheKey))
+	jitterPercent := 10 + int(hasher.Sum32()%11)
+	return ttl + time.Duration(jitterPercent)*ttl/100
+}
+
 // parseTimelineCursor 解码并校验时间线分页游标。
 func parseTimelineCursor(raw string) (*domainfeed.TimelineCursor, error) {
 	raw = strings.TrimSpace(raw)
@@ -221,7 +312,7 @@ func parseTimelineCursor(raw string) (*domainfeed.TimelineCursor, error) {
 	}
 
 	publishedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(payload.PublishedAt))
-	if err != nil || payload.VideoID <= 0 {
+	if err != nil || publishedAt.IsZero() || payload.VideoID <= 0 {
 		return nil, domainfeed.ErrInvalidCursor
 	}
 
@@ -252,7 +343,7 @@ func parseHotCursor(raw string) (*domainfeed.HotCursor, error) {
 	}
 
 	publishedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(payload.PublishedAt))
-	if err != nil || payload.VideoID <= 0 {
+	if err != nil || publishedAt.IsZero() || payload.VideoID <= 0 {
 		return nil, domainfeed.ErrInvalidCursor
 	}
 

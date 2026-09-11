@@ -2,6 +2,9 @@ package feed
 
 import (
 	"context"
+	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
 )
@@ -40,8 +43,13 @@ type Strategy interface {
 
 // TimelineStrategy 复用现有时间线查询能力。
 type TimelineStrategy struct {
-	scene domainfeed.Scene
-	repo  domainfeed.Repository
+	scene        domainfeed.Scene
+	repo         domainfeed.Repository
+	cache        FeedCache
+	firstPageTTL time.Duration
+	pageTTL      time.Duration
+	// group 按缓存键合并正在执行的查询，与用户身份无关。
+	group singleflight.Group
 }
 
 // HotStrategy 使用互动热度读取热榜 Feed。
@@ -54,4 +62,10 @@ type hotCursorPayload struct {
 	HotScore    int    `json:"hot_score"`
 	PublishedAt string `json:"published_at"`
 	VideoID     int64  `json:"video_id"`
+}
+
+// FeedCache 定义 Feed 结果缓存能力，Redis 实现在基础设施层提供。
+type FeedCache interface {
+	Get(ctx context.Context, key string) (*FeedResult, bool, error)
+	Set(ctx context.Context, key string, result *FeedResult, ttl time.Duration) error
 }

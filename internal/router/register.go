@@ -19,7 +19,8 @@ import (
 	uploadhandler "github.com/inumoroha/video-feed/internal/handler/upload"
 	userhandler "github.com/inumoroha/video-feed/internal/handler/user"
 	videohandler "github.com/inumoroha/video-feed/internal/handler/video"
-
+	feedcache "github.com/inumoroha/video-feed/internal/infrastructure/cache/feed"
+	infraredis "github.com/inumoroha/video-feed/internal/infrastructure/cache/redis"
 	feedpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/feed"
 	interactionpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/interaction"
 	relationpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/relation"
@@ -73,7 +74,12 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	videoService := applicationvideo.NewService(videoRepository)
 	videoHandler := videohandler.NewHandler(videoService)
 	feedRepository := feedpersistence.New(gormDB)
-	feedService := applicationfeed.NewService(feedRepository)
+	feedOptions := []applicationfeed.Option{}
+	if cfg.Redis.Addr != "" {
+		redisClient := infraredis.NewRedisClient(cfg.Redis)
+		feedOptions = append(feedOptions, applicationfeed.WithTimelineCache(feedcache.NewFeedCache(redisClient)))
+	}
+	feedService := applicationfeed.NewService(feedRepository, feedOptions...)
 	feedHandler := feedhandler.NewHandler(feedService)
 	interactionRepository := interactionpersistence.New(gormDB)
 	interactionService := applicationinteraction.NewService(interactionRepository)
