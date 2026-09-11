@@ -1,0 +1,77 @@
+services:
+    postgres:
+        image: postgres:17-alpine
+        container_name: gcfeed-postgres
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: video_feed_dev
+            POSTGRES_DB: video_feed
+        ports:
+            - "5433:5432"
+        volumes:
+            - postgres_data:/var/lib/postgresql/data
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U postgres -d video_feed"]
+            interval: 5s
+            timeout: 3s
+            retries: 20
+            start_period: 20s
+
+    redis:
+        image: redis:7.4-alpine
+        container_name: gcfeed-redis
+        ports:
+            - "6379:6379"
+        volumes:
+            - redis_data:/data
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 5s
+            timeout: 3s
+            retries: 20
+
+    api:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        container_name: gcfeed-api
+        depends_on:
+            postgres:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+        ports:
+            - "9000:9000"
+        environment:
+            DATABASE_URL: postgres://postgres:video_feed_dev@postgres:5432/video_feed?sslmode=disable
+            # 本地开发默认值；部署时可通过环境变量覆盖。
+            JWT_SECRET: ${JWT_SECRET:-local-dev-secret-change-before-deployment-2026}
+        volumes:
+            - ./configs/config.docker.yaml:/app/configs/config.yaml:ro
+            - api_uploads:/app/uploads
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "wget -qO- http://127.0.0.1:9000/health >/dev/null",
+                ]
+            interval: 10s
+            timeout: 3s
+            retries: 12
+            start_period: 20s
+
+    web:
+        build:
+            context: ./web
+            dockerfile: Dockerfile
+        container_name: gcfeed-web
+        depends_on:
+            api:
+                condition: service_healthy
+        ports:
+            - "5173:80"
+
+volumes:
+    postgres_data:
+    redis_data:
+    api_uploads:

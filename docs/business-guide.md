@@ -624,7 +624,7 @@ COALESCE(vs.like_count,0)*3 + COALESCE(vs.comment_count,0)*5 + COALESCE(vs.favor
 | **`GetFeed` 里有一句永远不成立的判断** | `application/feed/service.go:60-61` 判断 `req.Scene == ""`，但上一行的 `NormalizeScene` 在空值时已经返回默认场景、**不可能返回空串** | 死代码，可以删 |
 | **评论列表最后一页仍会返回下一页书签** | `application/interaction/service.go:122-128` 只判断了"有没有数据"（`len(items) > 0`），没判断"还有没有下一页"（`hasMore`）。而 Feed 的同类逻辑是判断过的（`feed/service.go:175-176`）。`docs/day5.md:16` 还声称修过这个"没有下一页仍返回 next_cursor"的问题 —— 只修了 Feed，漏了评论 | 小毛病。后果是前端会多发一次空请求，然后自己停下来，不会出错 |
 
-### 8.4 工程卫生（求职作品集的硬伤）
+### 8.4 工程卫生与安全（求职作品集的硬伤）
 
 | 问题 | 证据 | 影响 |
 | --- | --- | --- |
@@ -634,6 +634,7 @@ COALESCE(vs.like_count,0)*3 + COALESCE(vs.comment_count,0)*5 + COALESCE(vs.favor
 | **`AGENTS.md` 没进版本库** | `.gitignore` 第 3 行忽略了它 | 不算错（这是 AI 协作规范），但要知道它不在仓库里 |
 | **`cmd/test/main.go` 会把数据库连接串打印到日志** | `cmd/test/main.go:14` 直接 `log.Println(config.Database.URL)`，而连接串里含数据库密码 | 已被 `cmd/test/` 的 gitignore 规则排除，**没有泄漏**，但是个调试残留，建议删掉 |
 | **没有 Dockerfile / 部署说明** | 只有 `scripts/start.sh` | 面试官想跑起来你的项目会很费劲。有一个 `docker-compose.yml`（Postgres + 后端 + 前端）是极大的加分项 |
+| **上传接口不校验文件内容，存在存储型 XSS 风险** | `internal/handler/upload/handler.go:98-109` 的 `normalizeExtension` 只检查扩展名是不是"1-16 位的字母数字"，任何内容都能传上去。文件通过 `g.Static("/uploads", ...)` 原样对外提供（`register.go:90`），而前端通过 Vite 代理访问 `/uploads`，**和网页同源** | **中高**。攻击者可以上传 `evil.html` 或 `evil.svg`，然后把它当网页打开 —— 同源意味着它能读走用户的 token（token 存在 localStorage 里）。正确做法：只允许白名单扩展名（mp4/mov/webm/jpg/png）、校验文件头（magic number）、用 `Content-Disposition: attachment` 或独立域名提供下载 |
 
 ### 8.5 修复优先级建议
 
