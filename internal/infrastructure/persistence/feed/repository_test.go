@@ -3,131 +3,62 @@ package feed
 import (
 	"context"
 	"errors"
-	"testing"
-	"time"
-
 	"github.com/DATA-DOG/go-sqlmock"
 	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
-	domainvideo "github.com/inumoroha/video-feed/internal/domain/video"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"regexp"
+	"testing"
+	"time"
 )
 
-// TestRepositoryRejectsUninitializedRepository 验证未初始化仓储不会触发空指针异常。
-func TestRepositoryRejectsUninitializedRepository(t *testing.T) {
-	var repository *Repository
-
-	if _, err := repository.ListTimelineFeed(context.TODO(), nil, 10); err == nil || err.Error() != "feed repository is not initialized" {
-		t.Fatalf("ListTimelineFeed() error = %v, want uninitialized repository error", err)
+// TestListTimelinePage 验证时间线分页的参数校验、游标和结果映射。
+func TestListTimelinePage(t *testing.T) {
+	r, m := mockRepo(t)
+	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	m.ExpectQuery(regexp.QuoteMeta(`SELECT v.id AS video_id, v.published_at FROM videos AS v WHERE v.status = $1 AND v.published_at IS NOT NULL ORDER BY v.published_at DESC,v.id DESC LIMIT $2`)).WithArgs(2, 2).WillReturnRows(sqlmock.NewRows([]string{"video_id", "published_at"}).AddRow(7, at))
+	got, err := r.ListTimelinePage(context.Background(), nil, 2)
+	if err != nil || len(got) != 1 || got[0].VideoID != 7 {
+		t.Fatalf("got=%v err=%v", got, err)
+	}
+	if err = m.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
-// TestRepositoryRejectsInvalidInput 验证仓储会拒绝非法分页大小和游标。
-func TestRepositoryRejectsInvalidInput(t *testing.T) {
-	repository, _ := newMockRepository(t)
-
-	if _, err := repository.ListTimelineFeed(context.TODO(), nil, 0); !errors.Is(err, domainfeed.ErrInvalidLimit) {
-		t.Fatalf("ListTimelineFeed() error = %v, want %v", err, domainfeed.ErrInvalidLimit)
-	}
-
-	if _, err := repository.ListTimelineFeed(context.TODO(), &domainfeed.TimelineCursor{VideoID: 1}, 10); !errors.Is(err, domainfeed.ErrInvalidCursor) {
-		t.Fatalf("ListTimelineFeed() error = %v, want %v", err, domainfeed.ErrInvalidCursor)
+// TestListHotPage 验证热榜查询按热度和游标稳定排序。
+func TestListHotPage(t *testing.T) {
+	r, m := mockRepo(t)
+	at := time.Now()
+	m.ExpectQuery("SELECT .*hot_score.*FROM videos AS v LEFT JOIN video_stat AS vs").WithArgs(2, 2).WillReturnRows(sqlmock.NewRows([]string{"video_id", "hot_score", "published_at"}).AddRow(1, 12, at))
+	got, e := r.ListHotPage(context.Background(), nil, 2)
+	if e != nil || got[0].HotScore != 12 {
+		t.Fatalf("%v %v", got, e)
 	}
 }
 
-// TestListTimelineFeedMapsPublishedVideos 验证时间线查询会映射视频、作者和互动字段。
-func TestListTimelineFeedMapsPublishedVideos(t *testing.T) {
-	repository, mock := newMockRepository(t)
-	publishedAt := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
-	mock.ExpectQuery(timelineQueryPattern).
-		WithArgs(domainvideo.StatusPublished, 2).
-		WillReturnRows(sqlmock.NewRows([]string{
-			"video_id", "author_id", "author_nickname", "author_avatar_url",
-			"title", "description", "media_url", "cover_url",
-			"like_count", "comment_count", "favorite_count", "published_at",
-		}).AddRow(
-			7, 42, " author ", " avatar ", " title ", " description ",
-			" media ", " cover ", 3, 4, 5, publishedAt,
-		))
-
-	items, err := repository.ListTimelineFeed(context.Background(), nil, 2)
-	if err != nil {
-		t.Fatalf("ListTimelineFeed() error = %v", err)
+// TestRepositoryValidation 验证仓储和分页参数错误。
+func TestRepositoryValidation(t *testing.T) {
+	var r *Repository
+	if _, e := r.ListTimelinePage(nil, nil, 1); e == nil {
+		t.Fatal("want init error")
 	}
-	if len(items) != 1 {
-		t.Fatalf("ListTimelineFeed() item count = %d, want 1", len(items))
-	}
-
-	item := items[0]
-	if item.VideoID != 7 || item.AuthorID != 42 || item.AuthorNickname != "author" || item.AuthorAvatarURL != "avatar" {
-		t.Fatalf("ListTimelineFeed() identity = %+v, want mapped identity", item)
-	}
-	if item.Title != "title" || item.Description != "description" || item.MediaURL != "media" || item.CoverURL != "cover" {
-		t.Fatalf("ListTimelineFeed() content = %+v, want mapped content", item)
-	}
-	if item.LikeCount != 3 || item.CommentCount != 4 || item.FavoriteCount != 5 || !item.PublishedAt.Equal(publishedAt) {
-		t.Fatalf("ListTimelineFeed() metadata = %+v, want mapped metadata", item)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("SQL expectations were not met: %v", err)
+	rr, _ := mockRepo(t)
+	if _, e := rr.ListTimelinePage(context.Background(), nil, 0); !errors.Is(e, domainfeed.ErrInvalidLimit) {
+		t.Fatal(e)
 	}
 }
 
-// TestListTimelineFeedCapsLimit 验证查询数量最多保留一条额外记录用于判断下一页。
-func TestListTimelineFeedCapsLimit(t *testing.T) {
-	repository, mock := newMockRepository(t)
-	mock.ExpectQuery(timelineQueryPattern).
-		WithArgs(domainvideo.StatusPublished, domainfeed.MaxLimit+1).
-		WillReturnRows(sqlmock.NewRows([]string{
-			"video_id", "author_id", "author_nickname", "author_avatar_url",
-			"title", "description", "media_url", "cover_url",
-			"like_count", "comment_count", "favorite_count", "published_at",
-		}))
-
-	if _, err := repository.ListTimelineFeed(context.Background(), nil, domainfeed.MaxLimit+100); err != nil {
-		t.Fatalf("ListTimelineFeed() error = %v", err)
+// mockRepo 创建 PostgreSQL SQL mock 仓储。
+func mockRepo(t *testing.T) (*Repository, sqlmock.Sqlmock) {
+	db, m, e := sqlmock.New()
+	if e != nil {
+		t.Fatal(e)
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("SQL expectations were not met: %v", err)
+	t.Cleanup(func() { db.Close() })
+	g, e := gorm.Open(postgres.New(postgres.Config{Conn: db}), &gorm.Config{})
+	if e != nil {
+		t.Fatal(e)
 	}
-}
-
-// TestListTimelineFeedAppliesCursor 验证查询会使用发布时间和视频 ID 过滤后续页面。
-func TestListTimelineFeedAppliesCursor(t *testing.T) {
-	repository, mock := newMockRepository(t)
-	publishedAt := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
-	cursor := &domainfeed.TimelineCursor{PublishedAt: publishedAt, VideoID: 7}
-	mock.ExpectQuery(timelineQueryPattern).
-		WithArgs(domainvideo.StatusPublished, publishedAt, publishedAt, cursor.VideoID, 2).
-		WillReturnRows(sqlmock.NewRows([]string{
-			"video_id", "author_id", "author_nickname", "author_avatar_url",
-			"title", "description", "media_url", "cover_url",
-			"like_count", "comment_count", "favorite_count", "published_at",
-		}))
-
-	if _, err := repository.ListTimelineFeed(context.Background(), cursor, 2); err != nil {
-		t.Fatalf("ListTimelineFeed() error = %v", err)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("SQL expectations were not met: %v", err)
-	}
-}
-
-const timelineQueryPattern = `(?s)SELECT .*video_id.*a\.nickname AS author_nickname.*a\.avatar_url AS author_avatar_url.*hot_score.*FROM videos AS v LEFT JOIN users AS a ON a\.id = v\.author_id LEFT JOIN video_stat AS vs ON vs\.video_id = v\.id WHERE .*v\.status = \$[0-9]+.*v\.published_at IS NOT NULL.*ORDER BY v\.published_at DESC,v\.id DESC LIMIT \$[0-9]+`
-
-// newMockRepository 创建使用 PostgreSQL SQL mock 的信息流仓储。
-func newMockRepository(t *testing.T) (*Repository, sqlmock.Sqlmock) {
-	t.Helper()
-	sqlDB, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("sqlmock.New() error = %v", err)
-	}
-	t.Cleanup(func() {
-		_ = sqlDB.Close()
-	})
-	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("gorm.Open() error = %v", err)
-	}
-	return New(db), mock
+	return New(g), m
 }

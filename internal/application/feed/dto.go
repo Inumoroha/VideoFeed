@@ -54,18 +54,32 @@ type TimelineStrategy struct {
 
 // HotStrategy 使用互动热度读取热榜 Feed。
 type HotStrategy struct {
-	repo domainfeed.Repository
+	repo         domainfeed.Repository
+	cache        FeedCache
+	firstPageTTL time.Duration
+	pageTTL      time.Duration
+	group        singleflight.Group
 }
-
 // hotCursorPayload 表示热榜游标的编码载荷。
 type hotCursorPayload struct {
 	HotScore    int    `json:"hot_score"`
 	PublishedAt string `json:"published_at"`
 	VideoID     int64  `json:"video_id"`
 }
-
-// FeedCache 定义 Feed 结果缓存能力，Redis 实现在基础设施层提供。
+// FeedCache 定义 Feed 页、卡片和计数缓存能力，Redis 实现在基础设施层提供。
 type FeedCache interface {
-	Get(ctx context.Context, key string) (*FeedResult, bool, error)
-	Set(ctx context.Context, key string, result *FeedResult, ttl time.Duration) error
+	GetPage(ctx context.Context, key string) (*FeedPage, bool, error)
+	SetPage(ctx context.Context, key string, page *FeedPage, ttl time.Duration) error
+	GetCards(ctx context.Context, videoIDs []int64) (map[int64]*domainfeed.FeedCard, error)
+	SetCards(ctx context.Context, cards map[int64]*domainfeed.FeedCard, ttl time.Duration) error
+	GetStats(ctx context.Context, videoIDs []int64) (map[int64]*domainfeed.FeedStat, error)
+	SetStats(ctx context.Context, stats map[int64]*domainfeed.FeedStat, ttl time.Duration) error
+}
+
+// FeedPage 是页缓存中的轻量结果，卡片和计数会在组装阶段批量读取。
+type FeedPage struct {
+	Scene      domainfeed.Scene
+	Items      []*domainfeed.FeedPageItem
+	NextCursor string
+	HasMore    bool
 }
