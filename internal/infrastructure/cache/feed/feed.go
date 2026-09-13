@@ -7,8 +7,14 @@ import (
 	applicationfeed "github.com/inumoroha/video-feed/internal/application/feed"
 	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
 	"github.com/redis/go-redis/v9"
+	"strconv"
+	"strings"
 	"time"
 )
+
+const hotWindowMinutes = 60
+const hotMinuteBucketTTL = 2 * time.Hour
+const hotWindowCacheTTL = 2 * time.Minute
 
 // FeedCache 使用 Redis 保存 Feed 查询结果。
 type FeedCache struct{ client redis.Cmdable }
@@ -105,6 +111,57 @@ func (c *FeedCache) SetStats(ctx context.Context, m map[int64]*domainfeed.FeedSt
 		}
 	}
 	return nil
+}
+
+// AddHotScore 将互动热度写入分钟粒度的 Redis ZSET。
+func (c *FeedCache) AddHotScore(ctx context.Context, videoID int64, delta int, at time.Time) error {
+	if videoID <= 0 || delta == 0 {
+		return nil
+	}
+	key := hotMinuteKey(at)
+	if err := c.client.ZIncrBy(ctx, key, float64(delta), fmt.Sprintf("%020d", videoID)).Err(); err != nil {
+		return err
+	}
+	return c.client.Expire(ctx, key, hotMinuteBucketTTL).Err()
+}
+
+// ListHotWindowPage 合并最近一小时热度桶并读取分页结果。
+func (c *FeedCache) ListHotWindowPage(ctx context.Context, end time.Time, offset, limit int) ([]*domainfeed.FeedPageItem, error) {
+	if limit <= 0 {
+		return []*domainfeed.FeedPageItem{}, nil
+	}
+	end = end.UTC().Truncate(time.Minute)
+	key := fmt.Sprintf("feed:hot:window:v1:%d", end.Unix())
+	if _, e := c.client.ZUnionStore(ctx, key, &redis.ZStore{Keys: hotWindowMinuteKeys(end), Aggregate: "SUM"}).Result(); e != nil {
+		return nil, e
+	}
+	_ = c.client.Expire(ctx, key, hotWindowCacheTTL).Err()
+	vs, e := c.client.ZRevRangeWithScores(ctx, key, int64(offset), int64(offset+limit-1)).Result()
+	if e != nil {
+		return nil, e
+	}
+	out := make([]*domainfeed.FeedPageItem, 0, len(vs))
+	for _, v := range vs {
+		m, ok := v.Member.(string)
+		if !ok {
+			continue
+		}
+		id, _ := strconv.ParseInt(strings.TrimLeft(m, "0"), 10, 64)
+		if id > 0 {
+			out = append(out, &domainfeed.FeedPageItem{VideoID: id, HotScore: int(v.Score)})
+		}
+	}
+	return out, nil
+}
+func hotMinuteKey(t time.Time) string {
+	return fmt.Sprintf("feed:hot:minute:v1:%s", t.UTC().Truncate(time.Minute).Format("200601021504"))
+}
+func hotWindowMinuteKeys(e time.Time) []string {
+	r := make([]string, 0, hotWindowMinutes)
+	for i := hotWindowMinutes - 1; i >= 0; i-- {
+		r = append(r, hotMinuteKey(e.Add(-time.Duration(i)*time.Minute)))
+	}
+	return r
 }
 func (c *FeedCache) getCards(ctx context.Context, ids []int64, key func(int64) string) (map[int64]*domainfeed.FeedCard, error) {
 	m := map[int64]*domainfeed.FeedCard{}
