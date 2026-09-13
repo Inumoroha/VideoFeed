@@ -77,7 +77,7 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	feedOptions := []applicationfeed.Option{}
 	if cfg.Redis.Addr != "" {
 		redisClient := infraredis.NewRedisClient(cfg.Redis)
-		feedOptions = append(feedOptions, applicationfeed.WithTimelineCache(feedcache.NewFeedCache(redisClient)))
+		feedOptions = append(feedOptions, applicationfeed.WithFeedCache(feedcache.NewFeedCache(redisClient)))
 	}
 	feedService := applicationfeed.NewService(feedRepository, feedOptions...)
 	feedHandler := feedhandler.NewHandler(feedService)

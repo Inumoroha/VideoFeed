@@ -20,6 +20,39 @@ type handlerTestRepository struct {
 	err   error
 }
 
+func (r *handlerTestRepository) ListTimelinePage(_ context.Context, _ *domainfeed.TimelineCursor, _ int) ([]*domainfeed.FeedPageItem, error) {
+	out := make([]*domainfeed.FeedPageItem, 0, len(r.items))
+	for _, i := range r.items {
+		out = append(out, &domainfeed.FeedPageItem{VideoID: i.VideoID, PublishedAt: i.PublishedAt, HotScore: i.HotScore})
+	}
+	return out, r.err
+}
+func (r *handlerTestRepository) ListHotPage(_ context.Context, _ *domainfeed.HotCursor, _ int) ([]*domainfeed.FeedPageItem, error) {
+	return nil, r.err
+}
+func (r *handlerTestRepository) BatchGetFeedCards(_ context.Context, ids []int64) (map[int64]*domainfeed.FeedCard, error) {
+	m := map[int64]*domainfeed.FeedCard{}
+	for _, id := range ids {
+		for _, i := range r.items {
+			if i.VideoID == id {
+				m[id] = &domainfeed.FeedCard{VideoID: id, AuthorID: i.AuthorID, AuthorNickname: i.AuthorNickname, AuthorAvatarURL: i.AuthorAvatarURL, Title: i.Title, Description: i.Description, MediaURL: i.MediaURL, CoverURL: i.CoverURL}
+			}
+		}
+	}
+	return m, r.err
+}
+func (r *handlerTestRepository) BatchGetFeedStats(_ context.Context, ids []int64) (map[int64]*domainfeed.FeedStat, error) {
+	m := map[int64]*domainfeed.FeedStat{}
+	for _, id := range ids {
+		for _, i := range r.items {
+			if i.VideoID == id {
+				m[id] = &domainfeed.FeedStat{VideoID: id, LikeCount: i.LikeCount, CommentCount: i.CommentCount, FavoriteCount: i.FavoriteCount}
+			}
+		}
+	}
+	return m, r.err
+}
+
 // ListTimelineFeed 返回测试信息流或预设错误。
 func (r *handlerTestRepository) ListTimelineFeed(_ context.Context, _ *domainfeed.TimelineCursor, _ int) ([]*domainfeed.FeedItem, error) {
 	return r.items, r.err
