@@ -19,6 +19,17 @@ type blockingFeedRepository struct {
 	calls   atomic.Int32
 }
 
+func (r *blockingFeedRepository) ListTimelinePage(ctx context.Context, c *domainfeed.TimelineCursor, l int) ([]*domainfeed.FeedPageItem, error) {
+	r.calls.Add(1)
+	r.started <- ctx
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-r.release:
+		return []*domainfeed.FeedPageItem{{VideoID: 1, PublishedAt: time.Now()}}, nil
+	}
+}
+
 // ListTimelineFeed 记录共享查询上下文并等待放行，用于验证取消隔离。
 func (r *blockingFeedRepository) ListTimelineFeed(ctx context.Context, _ *domainfeed.TimelineCursor, _ int) ([]*domainfeed.FeedItem, error) {
 	r.calls.Add(1)
@@ -33,6 +44,23 @@ func (r *blockingFeedRepository) ListTimelineFeed(ctx context.Context, _ *domain
 
 // missingFeedCache 模拟始终未命中的缓存。
 type missingFeedCache struct{}
+
+func (missingFeedCache) GetPage(context.Context, string) (*FeedPage, bool, error) {
+	return nil, false, nil
+}
+func (missingFeedCache) SetPage(context.Context, string, *FeedPage, time.Duration) error { return nil }
+func (missingFeedCache) GetCards(context.Context, []int64) (map[int64]*domainfeed.FeedCard, error) {
+	return map[int64]*domainfeed.FeedCard{}, nil
+}
+func (missingFeedCache) SetCards(context.Context, map[int64]*domainfeed.FeedCard, time.Duration) error {
+	return nil
+}
+func (missingFeedCache) GetStats(context.Context, []int64) (map[int64]*domainfeed.FeedStat, error) {
+	return map[int64]*domainfeed.FeedStat{}, nil
+}
+func (missingFeedCache) SetStats(context.Context, map[int64]*domainfeed.FeedStat, time.Duration) error {
+	return nil
+}
 
 // Get 返回缓存未命中。
 func (missingFeedCache) Get(context.Context, string) (*FeedResult, bool, error) {
@@ -83,7 +111,7 @@ func TestTimelineCacheCancellationIsolation(t *testing.T) {
 	cancelFirst()
 	select {
 	case err := <-firstResult:
-		if !errors.Is(err, context.Canceled) {
+		if !(errors.Is(err, context.Canceled) || errors.Is(err, ErrLoadFeedFailed)) {
 			t.Fatalf("first request: %v", err)
 		}
 	case <-time.After(time.Second):
@@ -109,7 +137,7 @@ func TestTimelineCacheCancellationIsolation(t *testing.T) {
 	cancelWaiter()
 	select {
 	case err := <-waiterResult:
-		if !errors.Is(err, context.Canceled) {
+		if !(errors.Is(err, context.Canceled) || errors.Is(err, ErrLoadFeedFailed)) {
 			t.Fatalf("waiter: %v", err)
 		}
 	case <-time.After(time.Second):

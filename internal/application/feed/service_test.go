@@ -19,6 +19,32 @@ type serviceTestRepository struct {
 	err        error
 }
 
+func (r *serviceTestRepository) ListTimelinePage(_ context.Context, c *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, error) {
+	r.listLimit = limit
+	r.listCursor = c
+	if r.err != nil {
+		return nil, r.err
+	}
+	out := make([]*domainfeed.FeedPageItem, 0, len(r.items))
+	for _, i := range r.items {
+		out = append(out, &domainfeed.FeedPageItem{VideoID: i.VideoID, PublishedAt: i.PublishedAt, HotScore: i.HotScore})
+	}
+	return out, r.err
+}
+func (r *serviceTestRepository) ListHotPage(_ context.Context, _ *domainfeed.HotCursor, limit int) ([]*domainfeed.FeedPageItem, error) {
+	return nil, r.err
+}
+func (r *serviceTestRepository) BatchGetFeedCards(_ context.Context, ids []int64) (map[int64]*domainfeed.FeedCard, error) {
+	m := map[int64]*domainfeed.FeedCard{}
+	for _, id := range ids {
+		m[id] = &domainfeed.FeedCard{VideoID: id}
+	}
+	return m, nil
+}
+func (r *serviceTestRepository) BatchGetFeedStats(_ context.Context, ids []int64) (map[int64]*domainfeed.FeedStat, error) {
+	return map[int64]*domainfeed.FeedStat{}, nil
+}
+
 // ListTimelineFeed 返回测试信息流并记录服务请求的游标和查询数量。
 func (r *serviceTestRepository) ListTimelineFeed(_ context.Context, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedItem, error) {
 	r.listLimit = limit

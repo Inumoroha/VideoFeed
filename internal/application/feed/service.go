@@ -24,7 +24,6 @@ const hotPageCacheTTL = 30 * time.Second
 const feedCardCacheTTL = 15 * time.Minute
 const feedStatCacheTTL = 15 * time.Second
 
-
 // Service 通过 scene 策略注册表分发不同 Feed 场景。
 type Service struct {
 	strategies   map[domainfeed.Scene]Strategy
@@ -79,6 +78,9 @@ func NewService(repo domainfeed.Repository, options ...Option) *Service {
 	return service
 }
 
+// New 注入 Feed 仓储并注册默认场景策略。
+func New(repo domainfeed.Repository, options ...Option) *Service { return NewService(repo, options...) }
+
 // RegisterStrategy 把 scene 和具体策略绑定，新增 Feed 类型时在装配层调用。
 func (s *Service) RegisterStrategy(strategy Strategy) {
 	if strategy == nil {
@@ -90,6 +92,9 @@ func (s *Service) RegisterStrategy(strategy Strategy) {
 
 // GetFeed 根据 scene 选择策略并返回分页结果。
 func (s *Service) GetFeed(ctx context.Context, req FeedRequest) (*FeedResult, error) {
+	if s == nil {
+		return nil, ErrFeedServiceNotInitialized
+	}
 	if s == nil {
 		return nil, ErrFeedServiceNotInitialized
 	}
@@ -176,7 +181,6 @@ func (s *HotStrategy) List(ctx context.Context, req FeedRequest) (*FeedResult, e
 	}, nil
 }
 
-
 // RefreshTimelineFeed 从时间线起点查询视频流，适用于刷新首页数据。
 func (s *Service) RefreshTimelineFeed(ctx context.Context, limit int) (*TimelineFeedResult, error) {
 	return s.GetTimelineFeed(ctx, "", limit)
@@ -214,7 +218,27 @@ func (s *TimelineStrategy) List(ctx context.Context, req FeedRequest) (*FeedResu
 		NextCursor: page.NextCursor,
 		HasMore:    page.HasMore,
 	}, nil
-	
+
+}
+
+// listPageFromRepo 多查一条时间线记录以判断是否还有下一页，并生成游标。
+func (s *TimelineStrategy) listPageFromRepo(ctx context.Context, cursor *domainfeed.TimelineCursor, limit int) (*FeedPage, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timelineLoadTimeout)
+	defer cancel()
+	items, err := s.repo.ListTimelinePage(ctx, cursor, limit+1)
+	if err != nil {
+		return nil, ErrLoadFeedFailed
+	}
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	next := ""
+	if hasMore && len(items) > 0 {
+		last := items[len(items)-1]
+		next = encodeTimelineCursor(&domainfeed.TimelineCursor{PublishedAt: last.PublishedAt, VideoID: last.VideoID})
+	}
+	return &FeedPage{Scene: s.scene, Items: items, NextCursor: next, HasMore: hasMore}, nil
 }
 
 // listFromRepo 多查一条热榜记录以判断是否还有下一页，并生成游标。
@@ -233,10 +257,8 @@ func (s *HotStrategy) listPageFromRepo(ctx context.Context, parsedCursor *domain
 	nextCursor := ""
 	if hasMore && len(items) > 0 {
 		// 下一页从当前页最后一个元素之后开始，游标保存排序所需的两个字段。
-		nextCursor = encodeTimelineCursor(&domainfeed.TimelineCursor{
-			PublishedAt: items[len(items)-1].PublishedAt,
-			VideoID:     items[len(items)-1].VideoID,
-		})
+		last := items[len(items)-1]
+		nextCursor = encodeHotCursor(&domainfeed.HotCursor{HotScore: last.HotScore, PublishedAt: last.PublishedAt, VideoID: last.VideoID})
 	}
 
 	return &FeedPage{
@@ -249,7 +271,7 @@ func (s *HotStrategy) listPageFromRepo(ctx context.Context, parsedCursor *domain
 
 // normalizeLimit 将零值分页数量转换为默认值，并限制最大返回数量。
 func normalizeLimit(limit int) int {
-	if limit == 0 {
+	if limit <= 0 {
 		return defaultFeedLimit
 	}
 	if limit > domainfeed.MaxLimit {
@@ -258,6 +280,7 @@ func normalizeLimit(limit int) int {
 	return limit
 }
 
+// loadFeedPage 从缓存加载 Feed 页，或从数据库加载并缓存。
 func loadFeedPage(ctx context.Context, cache FeedCache, scene domainfeed.Scene, cursor string, limit int, firstPageTTL time.Duration, pageTTL time.Duration, group *singleflight.Group, load func() (*FeedPage, error)) (*FeedPage, error) {
 	if cache == nil || group == nil {
 		return load()
@@ -289,6 +312,7 @@ func loadFeedPage(ctx context.Context, cache FeedCache, scene domainfeed.Scene, 
 	return page, nil
 }
 
+// assembleFeedItems 从 Feed 页项组装 Feed 项。
 func assembleFeedItems(ctx context.Context, repo domainfeed.Repository, cache FeedCache, pageItems []*domainfeed.FeedPageItem) ([]*domainfeed.FeedItem, error) {
 	videoIDs := feedPageVideoIDs(pageItems)
 	if len(videoIDs) == 0 {
@@ -363,6 +387,7 @@ func assembleFeedItems(ctx context.Context, repo domainfeed.Repository, cache Fe
 	return items, nil
 }
 
+// feedPageVideoIDs 从 Feed 页项中提取视频 ID，去重。
 func feedPageVideoIDs(items []*domainfeed.FeedPageItem) []int64 {
 	videoIDs := make([]int64, 0, len(items))
 	seen := map[int64]struct{}{}
@@ -379,6 +404,7 @@ func feedPageVideoIDs(items []*domainfeed.FeedPageItem) []int64 {
 	return videoIDs
 }
 
+// missingCardIDs 从视频 ID 列表中提取缺失的卡片 ID。
 func missingCardIDs(videoIDs []int64, cards map[int64]*domainfeed.FeedCard) []int64 {
 	missing := make([]int64, 0)
 	for _, videoID := range videoIDs {
@@ -389,6 +415,7 @@ func missingCardIDs(videoIDs []int64, cards map[int64]*domainfeed.FeedCard) []in
 	return missing
 }
 
+// missingStatIDs 从视频 ID 列表中提取缺失的互动计数 ID。
 func missingStatIDs(videoIDs []int64, stats map[int64]*domainfeed.FeedStat) []int64 {
 	missing := make([]int64, 0)
 	for _, videoID := range videoIDs {
@@ -399,6 +426,7 @@ func missingStatIDs(videoIDs []int64, stats map[int64]*domainfeed.FeedStat) []in
 	return missing
 }
 
+// mergeCards 合并卡片缓存，优先使用源缓存中的卡片。
 func mergeCards(target map[int64]*domainfeed.FeedCard, source map[int64]*domainfeed.FeedCard) {
 	for videoID, card := range source {
 		if card != nil {
@@ -407,6 +435,7 @@ func mergeCards(target map[int64]*domainfeed.FeedCard, source map[int64]*domainf
 	}
 }
 
+// mergeStats 合并互动计数缓存，优先使用源缓存中的互动计数。
 func mergeStats(target map[int64]*domainfeed.FeedStat, source map[int64]*domainfeed.FeedStat) {
 	for videoID, stat := range source {
 		if stat != nil {
@@ -414,6 +443,7 @@ func mergeStats(target map[int64]*domainfeed.FeedStat, source map[int64]*domainf
 		}
 	}
 }
+
 // timelineCacheKey 根据游标和分页数量生成时间线缓存键。
 func feedPageCacheKey(scene domainfeed.Scene, cursor string, limit int) string {
 	scene = domainfeed.NormalizeScene(scene)
