@@ -29,6 +29,13 @@ func (r *blockingFeedRepository) ListTimelinePage(ctx context.Context, c *domain
 		return []*domainfeed.FeedPageItem{{VideoID: 1, PublishedAt: time.Now()}}, nil
 	}
 }
+func (r *blockingFeedRepository) BatchGetFeedCards(_ context.Context, ids []int64) (map[int64]*domainfeed.FeedCard, error) {
+	m := map[int64]*domainfeed.FeedCard{}
+	for _, id := range ids {
+		m[id] = &domainfeed.FeedCard{VideoID: id}
+	}
+	return m, nil
+}
 
 // ListTimelineFeed 记录共享查询上下文并等待放行，用于验证取消隔离。
 func (r *blockingFeedRepository) ListTimelineFeed(ctx context.Context, _ *domainfeed.TimelineCursor, _ int) ([]*domainfeed.FeedItem, error) {
@@ -44,6 +51,10 @@ func (r *blockingFeedRepository) ListTimelineFeed(ctx context.Context, _ *domain
 
 // missingFeedCache 模拟始终未命中的缓存。
 type missingFeedCache struct{}
+
+func (missingFeedCache) ListHotWindowPage(context.Context, time.Time, int, int) ([]*domainfeed.FeedPageItem, error) {
+	return nil, nil
+}
 
 func (missingFeedCache) GetPage(context.Context, string) (*FeedPage, bool, error) {
 	return nil, false, nil

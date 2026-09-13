@@ -60,12 +60,16 @@ type HotStrategy struct {
 	pageTTL      time.Duration
 	group        singleflight.Group
 }
+
 // hotCursorPayload 表示热榜游标的编码载荷。
 type hotCursorPayload struct {
 	HotScore    int    `json:"hot_score"`
 	PublishedAt string `json:"published_at"`
 	VideoID     int64  `json:"video_id"`
+	WindowEnd   string `json:"window_end,omitempty"`
+	Offset      int    `json:"offset,omitempty"`
 }
+
 // FeedCache 定义 Feed 页、卡片和计数缓存能力，Redis 实现在基础设施层提供。
 type FeedCache interface {
 	GetPage(ctx context.Context, key string) (*FeedPage, bool, error)
@@ -74,6 +78,7 @@ type FeedCache interface {
 	SetCards(ctx context.Context, cards map[int64]*domainfeed.FeedCard, ttl time.Duration) error
 	GetStats(ctx context.Context, videoIDs []int64) (map[int64]*domainfeed.FeedStat, error)
 	SetStats(ctx context.Context, stats map[int64]*domainfeed.FeedStat, ttl time.Duration) error
+	ListHotWindowPage(ctx context.Context, windowEnd time.Time, offset int, limit int) ([]*domainfeed.FeedPageItem, error)
 }
 
 // FeedPage 是页缓存中的轻量结果，卡片和计数会在组装阶段批量读取。

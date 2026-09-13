@@ -162,9 +162,12 @@ func (s *HotStrategy) List(ctx context.Context, req FeedRequest) (*FeedResult, e
 	}
 	limit := normalizeLimit(req.Limit)
 
-	page, err := loadFeedPage(ctx, s.cache, domainfeed.SceneHot, req.Cursor, limit, s.firstPageTTL, s.pageTTL, &s.group, func() (*FeedPage, error) {
-		return s.listPageFromRepo(ctx, parsedCursor, limit)
-	})
+	var page *FeedPage
+	if s.cache != nil {
+		page, err = s.listPageFromHotWindow(ctx, parsedCursor, limit)
+	} else {
+		page, err = s.listPageFromRepo(ctx, parsedCursor, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +182,44 @@ func (s *HotStrategy) List(ctx context.Context, req FeedRequest) (*FeedResult, e
 		NextCursor: page.NextCursor,
 		HasMore:    page.HasMore,
 	}, nil
+}
+
+// listPageFromHotWindow 从 Redis 热度窗口读取热榜分页。
+func (s *HotStrategy) listPageFromHotWindow(ctx context.Context, cursor *domainfeed.HotCursor, limit int) (*FeedPage, error) {
+	end := time.Now().UTC().Truncate(time.Minute)
+	offset := 0
+	if cursor != nil {
+		if cursor.WindowEnd.IsZero() || cursor.Offset < 0 {
+			return nil, domainfeed.ErrInvalidCursor
+		}
+		end = cursor.WindowEnd
+		offset = cursor.Offset
+	}
+	items, e := s.cache.ListHotWindowPage(ctx, end, offset, limit+1)
+	if e != nil {
+		return nil, ErrLoadFeedFailed
+	}
+	more := len(items) > limit
+	if more {
+		items = items[:limit]
+	}
+	next := ""
+	if len(items) > 0 {
+		next = encodeHotWindowCursor(&domainfeed.HotCursor{WindowEnd: end, Offset: offset + len(items)})
+	}
+	return &FeedPage{Scene: domainfeed.SceneHot, Items: items, NextCursor: next, HasMore: more}, nil
+}
+
+// encodeHotWindowCursor 编码热榜窗口分页游标。
+func encodeHotWindowCursor(cursor *domainfeed.HotCursor) string {
+	if cursor == nil || cursor.WindowEnd.IsZero() || cursor.Offset < 0 {
+		return ""
+	}
+	b, err := json.Marshal(hotCursorPayload{WindowEnd: cursor.WindowEnd.UTC().Format(time.RFC3339Nano), Offset: cursor.Offset})
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 // RefreshTimelineFeed 从时间线起点查询视频流，适用于刷新首页数据。
@@ -223,8 +264,10 @@ func (s *TimelineStrategy) List(ctx context.Context, req FeedRequest) (*FeedResu
 
 // listPageFromRepo 多查一条时间线记录以判断是否还有下一页，并生成游标。
 func (s *TimelineStrategy) listPageFromRepo(ctx context.Context, cursor *domainfeed.TimelineCursor, limit int) (*FeedPage, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timelineLoadTimeout)
+	// 共享查询不能绑定单个请求上下文，避免首个请求取消时终止其他等待者。
+	sharedCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	ctx = sharedCtx
 	items, err := s.repo.ListTimelinePage(ctx, cursor, limit+1)
 	if err != nil {
 		return nil, ErrLoadFeedFailed
@@ -291,17 +334,26 @@ func loadFeedPage(ctx context.Context, cache FeedCache, scene domainfeed.Scene, 
 		return page, nil
 	}
 
-	value, err, _ := group.Do(cacheKey, func() (any, error) {
-		if page, ok, err := cache.GetPage(ctx, cacheKey); err == nil && ok {
+	resultCh := group.DoChan(cacheKey, func() (any, error) {
+		sharedCtx := context.Background()
+		if page, ok, err := cache.GetPage(sharedCtx, cacheKey); err == nil && ok {
 			return page, nil
 		}
 		page, err := load()
 		if err != nil {
 			return nil, err
 		}
-		_ = cache.SetPage(ctx, cacheKey, page, feedPageCacheTTL(cursor, cacheKey, firstPageTTL, pageTTL))
+		_ = cache.SetPage(sharedCtx, cacheKey, page, feedPageCacheTTL(cursor, cacheKey, firstPageTTL, pageTTL))
 		return page, nil
 	})
+	var value any
+	var err error
+	select {
+	case result := <-resultCh:
+		value, err = result.Val, result.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -492,7 +544,6 @@ func parseTimelineCursor(raw string) (*domainfeed.TimelineCursor, error) {
 	if err := json.Unmarshal(content, &payload); err != nil {
 		return nil, domainfeed.ErrInvalidCursor
 	}
-
 	publishedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(payload.PublishedAt))
 	if err != nil || publishedAt.IsZero() || payload.VideoID <= 0 {
 		return nil, domainfeed.ErrInvalidCursor
@@ -522,6 +573,13 @@ func parseHotCursor(raw string) (*domainfeed.HotCursor, error) {
 	var payload hotCursorPayload
 	if err := json.Unmarshal(content, &payload); err != nil {
 		return nil, domainfeed.ErrInvalidCursor
+	}
+	if strings.TrimSpace(payload.WindowEnd) != "" {
+		windowEnd, parseErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(payload.WindowEnd))
+		if parseErr != nil || payload.Offset < 0 {
+			return nil, domainfeed.ErrInvalidCursor
+		}
+		return &domainfeed.HotCursor{WindowEnd: windowEnd, Offset: payload.Offset}, nil
 	}
 
 	publishedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(payload.PublishedAt))
