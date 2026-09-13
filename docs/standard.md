@@ -78,6 +78,27 @@ apps/web/
 
 当前前端保持轻量结构。页面数量继续增长时，将 `App.jsx` 拆分为 `src/pages/`、`src/components/`、`src/lib/api.js`，拆分后的命名仍沿用当前函数组件和 CSS class 风格。
 
+### 2.4 容器化部署
+
+在项目根目录通过 Docker Compose 启动完整环境：
+
+```bash
+docker compose up --build
+```
+
+Compose 配置位于根目录的 `docker-compose.yaml`，用于编排 `postgres`、`redis`、`api`、`web` 四个服务。API 容器挂载 `configs/config.docker.yaml` 作为运行配置，通过 `postgres:5432` 连接 PostgreSQL，并通过 `redis:6379` 连接 Redis；Web 容器使用 Nginx 提供静态资源，并将 `/api/` 和 `/uploads/` 转发到 API 服务的 `9000` 端口。
+
+容器端口约定：
+
+| 服务       | 本机端口 | 容器端口 |
+| ---------- | -------- | -------- |
+| Web        | `5173`   | `80`     |
+| API        | `9000`   | `9000`   |
+| PostgreSQL | `5433`   | `5432`   |
+| Redis      | `6379`   | `6379`   |
+
+后端镜像使用根目录的 `Dockerfile` 构建，前端镜像使用 `web/Dockerfile` 构建。生产 Web 容器的上传体积限制与后端上传限制保持一致，Nginx 的 `client_max_body_size` 设置为 `1024m`。
+
 ## 3. Go 包与命名规范
 
 ### 3.1 包名
