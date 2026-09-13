@@ -12,10 +12,23 @@ import (
 )
 
 const defaultCommentLimit = 20
+const hotScoreLikeWeight = 3
+const hotScoreFavoriteWeight = 4
+const hotScoreCommentWeight = 5
 
 // Service 编排点赞、收藏和评论相关的应用用例。
 type Service struct {
-	repo domaininteraction.Repository
+	repo     domaininteraction.Repository
+	hotCache interface {
+		AddHotScore(context.Context, int64, int, time.Time) error
+	}
+}
+
+// WithHotScoreCache 配置用于记录互动热度的缓存。
+func WithHotScoreCache(cache interface {
+	AddHotScore(context.Context, int64, int, time.Time) error
+}) func(*Service) {
+	return func(s *Service) { s.hotCache = cache }
 }
 
 // commentCursorPayload 表示评论分页游标的编码载荷。
@@ -25,8 +38,12 @@ type commentCursorPayload struct {
 }
 
 // NewService 创建使用指定互动仓储的应用服务。
-func NewService(repo domaininteraction.Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo domaininteraction.Repository, options ...func(*Service)) *Service {
+	s := &Service{repo: repo}
+	for _, option := range options {
+		option(s)
+	}
+	return s
 }
 
 // Like 设置用户对视频为点赞状态并返回最新互动统计。
@@ -83,6 +100,9 @@ func (s *Service) CreateComment(ctx context.Context, userID int64, videoID int64
 	}
 	if created == nil {
 		return nil, ErrSaveInteractionFailed
+	}
+	if s.hotCache != nil {
+		_ = s.hotCache.AddHotScore(ctx, created.VideoID, hotScoreCommentWeight, time.Now().UTC())
 	}
 
 	return &CreateCommentResult{Comment: created, CommentCount: count}, nil
@@ -156,6 +176,7 @@ func (s *Service) DeleteComment(ctx context.Context, commentID int64, userID int
 	if comment == nil {
 		return nil, ErrUpdateInteractionFailed
 	}
+	if s.hotCache != nil { _ = s.hotCache.AddHotScore(ctx, comment.VideoID, -hotScoreCommentWeight, time.Now().UTC()) }
 
 	return &DeleteCommentResult{
 		CommentID:    comment.ID,
@@ -204,6 +225,16 @@ func (s *Service) setAction(ctx context.Context, userID int64, videoID int64, ac
 	}
 	if action.ActionType != domaininteraction.ActionTypeLike && action.ActionType != domaininteraction.ActionTypeFavorite {
 		return nil, ErrUpdateInteractionFailed
+	}
+	if s.hotCache != nil {
+		weight := hotScoreLikeWeight
+		if actionType == domaininteraction.ActionTypeFavorite {
+			weight = hotScoreFavoriteWeight
+		}
+		if !active {
+			weight = -weight
+		}
+		_ = s.hotCache.AddHotScore(ctx, action.VideoID, weight, time.Now().UTC())
 	}
 	return result, nil
 }

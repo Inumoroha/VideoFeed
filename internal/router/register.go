@@ -75,14 +75,20 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	videoHandler := videohandler.NewHandler(videoService)
 	feedRepository := feedpersistence.New(gormDB)
 	feedOptions := []applicationfeed.Option{}
+	var feedCache *feedcache.FeedCache
 	if cfg.Redis.Addr != "" {
 		redisClient := infraredis.NewRedisClient(cfg.Redis)
-		feedOptions = append(feedOptions, applicationfeed.WithFeedCache(feedcache.NewFeedCache(redisClient)))
+		feedCache = feedcache.NewFeedCache(redisClient)
+		feedOptions = append(feedOptions, applicationfeed.WithFeedCache(feedCache))
 	}
 	feedService := applicationfeed.NewService(feedRepository, feedOptions...)
 	feedHandler := feedhandler.NewHandler(feedService)
 	interactionRepository := interactionpersistence.New(gormDB)
-	interactionService := applicationinteraction.NewService(interactionRepository)
+	interactionOptions := []func(*applicationinteraction.Service){}
+	if feedCache != nil {
+		interactionOptions = append(interactionOptions, applicationinteraction.WithHotScoreCache(feedCache))
+	}
+	interactionService := applicationinteraction.NewService(interactionRepository, interactionOptions...)
 	interactionHandler := interactionhandler.NewHandler(interactionService)
 	relationRepository := relationpersistence.New(gormDB)
 	relationService := applicationrelation.NewService(relationRepository)
