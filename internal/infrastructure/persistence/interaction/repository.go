@@ -39,6 +39,16 @@ func New(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
 
+// GetVideoStat 读取视频当前互动计数。
+func (r *Repository) GetVideoStat(ctx context.Context, videoID int64) (*domaininteraction.VideoStat, error) {
+	var stat infravideo.VideoStatModel
+	err := r.db.WithContext(ctx).Table("video_stat").Where("video_id = ?", videoID).Take(&stat).Error
+	if err != nil {
+		return nil, mapVideoError(err)
+	}
+	return &domaininteraction.VideoStat{VideoID: stat.VideoID, LikeCount: stat.LikeCount, CommentCount: stat.CommentCount, FavoriteCount: stat.FavoriteCount}, nil
+}
+
 // SetAction 设置用户对已发布视频的点赞或收藏状态，并持久化首次幂等结果和统计快照。
 func (r *Repository) SetAction(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string) (*domaininteraction.Action, int, int, error) {
 	if err := r.validateRepository(); err != nil {

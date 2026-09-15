@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -21,6 +22,7 @@ import (
 	videohandler "github.com/inumoroha/video-feed/internal/handler/video"
 	feedcache "github.com/inumoroha/video-feed/internal/infrastructure/cache/feed"
 	infraredis "github.com/inumoroha/video-feed/internal/infrastructure/cache/redis"
+	inframq "github.com/inumoroha/video-feed/internal/infrastructure/mq"
 	feedpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/feed"
 	interactionpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/interaction"
 	relationpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/relation"
@@ -87,6 +89,12 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	interactionOptions := []func(*applicationinteraction.Service){}
 	if feedCache != nil {
 		interactionOptions = append(interactionOptions, applicationinteraction.WithHotScoreCache(feedCache))
+		if cfg.RabbitMQ.URL != "" {
+			if broker, e := inframq.NewRabbitMQ(cfg.RabbitMQ); e == nil {
+				interactionOptions = append(interactionOptions, applicationinteraction.WithAsyncActionPipeline(feedCache, broker))
+				_ = applicationinteraction.NewActionWorker(interactionRepository, broker).Start(context.Background())
+			}
+		}
 	}
 	interactionService := applicationinteraction.NewService(interactionRepository, interactionOptions...)
 	interactionHandler := interactionhandler.NewHandler(interactionService)

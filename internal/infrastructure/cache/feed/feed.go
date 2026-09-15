@@ -5,22 +5,117 @@ import (
 	"encoding/json"
 	"fmt"
 	applicationfeed "github.com/inumoroha/video-feed/internal/application/feed"
+	applicationinteraction "github.com/inumoroha/video-feed/internal/application/interaction"
 	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
+	domaininteraction "github.com/inumoroha/video-feed/internal/domain/interaction"
 	"github.com/redis/go-redis/v9"
 	"strconv"
 	"strings"
 	"time"
 )
 
+// SetActionState 在 Redis 中保存用户互动状态并更新视频计数。
+func (c *FeedCache) SetActionState(ctx context.Context, userID, videoID int64, actionType string, active bool, idempotencyKey string, initial *domaininteraction.VideoStat) (*applicationinteraction.ActionStateResult, error) {
+	// Redis Cmdable 在当前实现中通过事务管道完成状态与计数的一致写入。
+	var result *applicationinteraction.ActionStateResult
+	err := c.client.Watch(ctx, func(tx *redis.Tx) error {
+		var e error
+		result, e = c.setActionStateWithClient(ctx, tx, userID, videoID, actionType, active, idempotencyKey, initial)
+		return e
+	}, interactionActionKey(userID, videoID, actionType), interactionStatCounterKey(videoID), feedStatKey(videoID))
+	return result, err
+}
+
+func (c *FeedCache) setActionStateWithClient(ctx context.Context, client redis.Cmdable, userID, videoID int64, actionType string, active bool, idempotencyKey string, initial *domaininteraction.VideoStat) (*applicationinteraction.ActionStateResult, error) {
+	actionType, err := domaininteraction.NormalizeActionType(actionType)
+	if err != nil {
+		return nil, err
+	}
+	key := interactionActionKey(userID, videoID, actionType)
+	old, err := client.HGetAll(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+	oldActive := old["active"] == "1"
+	delta := 0
+	if old["idempotency_key"] == strings.TrimSpace(idempotencyKey) && idempotencyKey != "" {
+		active = oldActive
+	} else if old["active"] == "" {
+		if active {
+			delta = 1
+		}
+	} else if oldActive != active {
+		if active {
+			delta = 1
+		} else {
+			delta = -1
+		}
+	}
+	stat := &domainfeed.FeedStat{VideoID: videoID}
+	counterKey := interactionStatCounterKey(videoID)
+	counters, e := client.HGetAll(ctx, counterKey).Result()
+	if e != nil {
+		return nil, e
+	}
+	if len(counters) > 0 {
+		stat.LikeCount, _ = strconv.Atoi(counters["like_count"])
+		stat.CommentCount, _ = strconv.Atoi(counters["comment_count"])
+		stat.FavoriteCount, _ = strconv.Atoi(counters["favorite_count"])
+	} else if initial != nil {
+		stat.LikeCount = initial.LikeCount
+		stat.CommentCount = initial.CommentCount
+		stat.FavoriteCount = initial.FavoriteCount
+	}
+	if actionType == domaininteraction.ActionTypeLike {
+		stat.LikeCount = clampRedisCount(stat.LikeCount + delta)
+	} else {
+		stat.FavoriteCount = clampRedisCount(stat.FavoriteCount + delta)
+	}
+	_, err = client.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		v := "0"
+		if active {
+			v = "1"
+		}
+		p.HSet(ctx, key, "active", v, "idempotency_key", strings.TrimSpace(idempotencyKey))
+		p.Expire(ctx, key, actionStateTTL)
+		b, _ := json.Marshal(stat)
+		p.HSet(ctx, counterKey, "like_count", stat.LikeCount, "comment_count", stat.CommentCount, "favorite_count", stat.FavoriteCount)
+		p.Expire(ctx, counterKey, actionStatTTL)
+		p.Set(ctx, feedStatKey(videoID), b, actionStatJSONTTL)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &applicationinteraction.ActionStateResult{VideoID: videoID, ActionType: actionType, Active: active, LikeCount: stat.LikeCount, FavoriteCount: stat.FavoriteCount, Delta: delta, IdempotencyKey: strings.TrimSpace(idempotencyKey)}, nil
+}
+
 const hotWindowMinutes = 60
 const hotMinuteBucketTTL = 2 * time.Hour
 const hotWindowCacheTTL = 2 * time.Minute
+const actionStateTTL = 30 * 24 * time.Hour
+const actionStatTTL = 24 * time.Hour
+const actionStatJSONTTL = 15 * time.Second
 
 // FeedCache 使用 Redis 保存 Feed 查询结果。
-type FeedCache struct{ client redis.Cmdable }
+type redisWatchCmdable interface {
+	redis.Cmdable
+	Watch(context.Context, func(*redis.Tx) error, ...string) error
+}
+
+type FeedCache struct{ client redisWatchCmdable }
+
+// clampRedisCount 将 Redis 互动计数限制为不小于零。
+func clampRedisCount(value int) int {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
 
 // NewFeedCache 创建 Feed 结果缓存。
-func NewFeedCache(client redis.Cmdable) *FeedCache { return &FeedCache{client: client} }
+// NewFeedCache 创建支持事务型互动状态更新的 Feed 缓存。
+func NewFeedCache(client redisWatchCmdable) *FeedCache { return &FeedCache{client: client} }
 
 // GetPage 读取轻量 Feed 页。
 func (c *FeedCache) GetPage(ctx context.Context, key string) (*applicationfeed.FeedPage, bool, error) {
@@ -155,6 +250,16 @@ func (c *FeedCache) ListHotWindowPage(ctx context.Context, end time.Time, offset
 }
 func hotMinuteKey(t time.Time) string {
 	return fmt.Sprintf("feed:hot:minute:v1:%s", t.UTC().Truncate(time.Minute).Format("200601021504"))
+}
+
+// interactionActionKey 返回用户视频互动状态的 Redis 键。
+func interactionActionKey(userID, videoID int64, actionType string) string {
+	return fmt.Sprintf("interaction:action:v1:%d:%d:%s", userID, videoID, strings.ToLower(actionType))
+}
+
+// interactionStatCounterKey 返回视频互动计数 Hash 的 Redis 键。
+func interactionStatCounterKey(videoID int64) string {
+	return fmt.Sprintf("video:stat:counter:v1:%d", videoID)
 }
 func hotWindowMinuteKeys(e time.Time) []string {
 	r := make([]string, 0, hotWindowMinutes)

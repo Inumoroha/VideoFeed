@@ -21,6 +21,14 @@ const (
 	MaxLimit                = 100
 )
 
+// VideoStat 保存视频互动计数快照。
+type VideoStat struct {
+	VideoID       int64
+	LikeCount     int
+	CommentCount  int
+	FavoriteCount int
+}
+
 // Action 表示用户对视频执行的点赞或收藏动作及其当前状态。
 type Action struct {
 	ID             int64

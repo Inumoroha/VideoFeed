@@ -2,9 +2,12 @@ package interaction
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -22,6 +25,54 @@ type Service struct {
 	hotCache interface {
 		AddHotScore(context.Context, int64, int, time.Time) error
 	}
+	actionStateStore ActionStateStore
+	actionPublisher  ActionEventPublisher
+}
+
+// ActionStateResult 表示快速状态和互动计数的写入结果。
+type ActionStateResult struct {
+	VideoID        int64
+	ActionType     string
+	Active         bool
+	LikeCount      int
+	FavoriteCount  int
+	Delta          int
+	IdempotencyKey string
+}
+
+// ActionStateStore 保存点赞收藏快速状态。
+type ActionStateStore interface {
+	SetActionState(context.Context, int64, int64, string, bool, string, *domaininteraction.VideoStat) (*ActionStateResult, error)
+}
+
+// ActionEventPublisher 发布互动异步事件。
+type ActionEventPublisher interface {
+	PublishActionChanged(context.Context, *ActionChangedEvent) error
+}
+
+// ActionChangedEvent 表示一次点赞或收藏状态变化。
+type ActionChangedEvent struct {
+	EventID        string    `json:"event_id"`
+	UserID         int64     `json:"user_id"`
+	VideoID        int64     `json:"video_id"`
+	ActionType     string    `json:"action_type"`
+	Active         bool      `json:"active"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	OccurredAt     time.Time `json:"occurred_at"`
+}
+
+// WithAsyncActionPipeline 配置快速状态存储和事件发布器。
+func WithAsyncActionPipeline(s ActionStateStore, p ActionEventPublisher) func(*Service) {
+	return func(x *Service) { x.actionStateStore = s; x.actionPublisher = p }
+}
+
+// NewActionChangedEvent 创建互动变更事件。
+func NewActionChangedEvent(uid, vid int64, typ string, active bool, key string) *ActionChangedEvent {
+	b := make([]byte, 12)
+	if _, e := rand.Read(b); e != nil {
+		b = []byte(fmt.Sprintf("%d", time.Now().UnixNano()))
+	}
+	return &ActionChangedEvent{EventID: hex.EncodeToString(b), UserID: uid, VideoID: vid, ActionType: typ, Active: active, IdempotencyKey: strings.TrimSpace(key), OccurredAt: time.Now().UTC()}
 }
 
 // WithHotScoreCache 配置用于记录互动热度的缓存。
@@ -176,7 +227,9 @@ func (s *Service) DeleteComment(ctx context.Context, commentID int64, userID int
 	if comment == nil {
 		return nil, ErrUpdateInteractionFailed
 	}
-	if s.hotCache != nil { _ = s.hotCache.AddHotScore(ctx, comment.VideoID, -hotScoreCommentWeight, time.Now().UTC()) }
+	if s.hotCache != nil {
+		_ = s.hotCache.AddHotScore(ctx, comment.VideoID, -hotScoreCommentWeight, time.Now().UTC())
+	}
 
 	return &DeleteCommentResult{
 		CommentID:    comment.ID,
@@ -204,6 +257,42 @@ func (s *Service) setAction(ctx context.Context, userID int64, videoID int64, ac
 	actionType, err := domaininteraction.NormalizeActionType(actionType)
 	if err != nil {
 		return nil, err
+	}
+	if s.actionStateStore != nil && s.actionPublisher != nil {
+		provider, ok := s.repo.(interface {
+			GetVideoStat(context.Context, int64) (*domaininteraction.VideoStat, error)
+		})
+		if !ok {
+			return nil, ErrUpdateInteractionFailed
+		}
+		stat, e := provider.GetVideoStat(ctx, videoID)
+		if e != nil {
+			return nil, e
+		}
+		state, e := s.actionStateStore.SetActionState(ctx, userID, videoID, actionType, active, idempotencyKey, stat)
+		if e != nil {
+			return nil, ErrUpdateInteractionFailed
+		}
+		if state.Delta != 0 {
+			weight := hotScoreLikeWeight
+			if actionType == domaininteraction.ActionTypeFavorite {
+				weight = hotScoreFavoriteWeight
+			}
+			if !active {
+				weight = -weight
+			}
+			if s.hotCache != nil {
+				_ = s.hotCache.AddHotScore(ctx, videoID, weight, time.Now().UTC())
+			}
+			if e = s.actionPublisher.PublishActionChanged(ctx, NewActionChangedEvent(userID, videoID, actionType, active, idempotencyKey)); e != nil {
+				action, likeCount, favoriteCount, syncErr := s.repo.SetAction(ctx, userID, videoID, actionType, active, idempotencyKey)
+				if syncErr != nil || action == nil {
+					return nil, ErrUpdateInteractionFailed
+				}
+				return &ActionResult{VideoID: action.VideoID, ActionType: action.ActionType, Active: action.Active(), LikeCount: likeCount, FavoriteCount: favoriteCount}, nil
+			}
+		}
+		return &ActionResult{VideoID: state.VideoID, ActionType: state.ActionType, Active: state.Active, LikeCount: state.LikeCount, FavoriteCount: state.FavoriteCount}, nil
 	}
 
 	action, likeCount, favoriteCount, err := s.repo.SetAction(ctx, userID, videoID, actionType, active, idempotencyKey)
