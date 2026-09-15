@@ -24,6 +24,8 @@ internal/handler/interaction/
 
 ## 3. 接口设计
 
+点赞和收藏在 Redis 中先保存用户状态与实时计数，再通过 RabbitMQ 发布 `ActionChangedEvent`，由 Worker 幂等写入 PostgreSQL。RabbitMQ 使用 `gcfeed.interaction` Exchange、`gcfeed.interaction.action_changed` Queue 和 `interaction.action_changed` Routing Key；Redis 用户状态键格式为 `interaction:action:v1:{user_id}:{video_id}:{action}`，计数键格式为 `video:stat:counter:v1:{video_id}`。
+
 | 方法   | 接口路径                                 | 作用          | 鉴权       | 幂等键 |
 | ------ | ---------------------------------------- | ------------- | ---------- | ------ |
 | PUT    | `/api/videos/{videoId}/like`             | 设置点赞      | Bearer JWT | 支持   |

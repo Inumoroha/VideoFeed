@@ -44,8 +44,9 @@ docker compose up --build
 | API 健康检查 | `http://127.0.0.1:9000/health` |
 | PostgreSQL   | `127.0.0.1:5433`               |
 | Redis        | `127.0.0.1:6379`               |
+| RabbitMQ     | `127.0.0.1:5672` / `15672`     |
 
-Compose 会启动 `postgres`、`redis`、`api`、`web` 四个服务。API 容器使用 `configs/config.docker.yaml`，数据库地址为 `postgres:5432`，Redis 地址为 `redis:6379`。
+Compose 会启动 `postgres`、`redis`、`rabbitmq`、`api`、`web` 五个服务。API 容器使用 `configs/config.docker.yaml`，数据库地址为 `postgres:5432`，Redis 地址为 `redis:6379`，RabbitMQ 地址为 `rabbitmq:5672`。
 
 后台启动：
 
