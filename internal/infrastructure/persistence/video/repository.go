@@ -39,24 +39,14 @@ func New(db *gorm.DB) *Repository {
 	return &Repository{db: db}
 }
 
-// EnsureStats 为没有统计记录的视频补齐默认统计，并迁移旧 videos 表中的统计字段。
+// EnsureStats 为没有统计记录的视频补齐默认统计。
 func EnsureStats(db *gorm.DB) error {
 	if db == nil {
 		return errors.New("gorm database is nil")
 	}
 
-	hasLegacyColumns, err := hasLegacyVideoStatColumns(db)
-	if err != nil {
-		return err
-	}
-
-	values := "0, 0, 0"
-	if hasLegacyColumns {
-		values = "v.like_count, v.comment_count, v.favorite_count"
-	}
 	query := "INSERT INTO video_stat (video_id, like_count, comment_count, favorite_count, created_at, updated_at) " +
-		"SELECT v.id, " + values + ", CURRENT_TIMESTAMP, CURRENT_TIMESTAMP " +
-		"FROM videos AS v " +
+		"SELECT v.id, 0, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM videos AS v " +
 		"LEFT JOIN video_stat AS vs ON vs.video_id = v.id " +
 		"WHERE vs.video_id IS NULL " +
 		"ON CONFLICT (video_id) DO NOTHING"
@@ -299,22 +289,6 @@ func videoWithStatSelect() string {
 		"COALESCE(vs.comment_count, 0) AS comment_count, " +
 		"COALESCE(vs.favorite_count, 0) AS favorite_count, " +
 		"v.published_at, v.idempotency_key, v.created_at, v.updated_at"
-}
-
-// hasLegacyVideoStatColumns 检查旧 videos 表是否仍保留统计字段。
-func hasLegacyVideoStatColumns(db *gorm.DB) (bool, error) {
-	var count int64
-	err := db.Raw(`
-		SELECT COUNT(*)
-		FROM information_schema.columns
-		WHERE table_schema = current_schema()
-		  AND table_name = 'videos'
-		  AND column_name IN ('like_count', 'comment_count', 'favorite_count')
-	`).Scan(&count).Error
-	if err != nil {
-		return false, err
-	}
-	return count == 3, nil
 }
 
 // idempotencyKeyPtr 将空幂等键转换为 nil，避免占用唯一约束。
