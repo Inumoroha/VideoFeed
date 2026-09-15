@@ -10,8 +10,8 @@ type feedQueryRequest struct {
 	ClientContext map[string]string `json:"context"`
 }
 
-// timelineFeedResponse 表示时间线查询分页接口返回的结果。
-type timelineFeedResponse struct {
+// feedItemsResponse 表示时间线查询分页接口返回的结果。
+type feedItemsResponse struct {
 	Scene      string             `json:"scene"`
 	Items      []feedItemResponse `json:"items"`
 	NextCursor string             `json:"next_cursor"`

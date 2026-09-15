@@ -168,7 +168,7 @@ func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandle
 	videos.GET("/:videoId", videoHandler.Get)
 	videos.DELETE("/:videoId", authMiddleware, videoHandler.Delete)
 
-	api.GET("/feed-items", optionalMiddleware, feedHandler.Timeline)
+	api.GET("/feed-items", optionalMiddleware, feedHandler.ListFeedItems)
 	api.POST("/feed/query", optionalMiddleware, feedHandler.Query)
 
 	if interactionHandler != nil {

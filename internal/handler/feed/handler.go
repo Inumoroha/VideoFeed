@@ -23,8 +23,8 @@ func NewHandler(service *applicationfeed.Service) *Handler {
 	return &Handler{service: service}
 }
 
-// Timeline 读取指定 scene 的 Feed，cursor 和 limit 来自 query 参数。
-func (h *Handler) Timeline(c *gin.Context) {
+// ListFeedItems 读取指定 scene 的 Feed，cursor 和 limit 来自 query 参数。
+func (h *Handler) ListFeedItems(c *gin.Context) {
 	if h == nil || h.service == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 		return
@@ -48,8 +48,11 @@ func (h *Handler) Timeline(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, timelineFeedResponseFromResult(result))
+	c.JSON(http.StatusOK, feedItemsResponseFromResult(result))
 }
+
+// Timeline 读取时间线 Feed，兼容既有路由调用方。
+func (h *Handler) Timeline(c *gin.Context) { h.ListFeedItems(c) }
 
 // Query 通过请求体接收复杂 Feed 查询参数，适合推荐上下文逐步扩展。
 func (h *Handler) Query(c *gin.Context) {
@@ -82,7 +85,7 @@ func (h *Handler) Query(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, timelineFeedResponseFromResult(result))
+	c.JSON(http.StatusOK, feedItemsResponseFromResult(result))
 }
 
 // Refresh 从信息流起点重新查询数据，用于刷新首页信息流。
@@ -98,13 +101,13 @@ func (h *Handler) Refresh(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.RefreshTimelineFeed(c.Request.Context(), limit)
+	result, err := h.service.RefreshFeed(c.Request.Context(), limit)
 	if err != nil {
 		writeFeedError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, timelineFeedResponseFromResult(result))
+	c.JSON(http.StatusOK, feedItemsResponseFromResult(result))
 }
 
 // parseLimit 解析信息流分页数量，空值交由应用服务使用默认值。
@@ -132,10 +135,10 @@ func parseBodyLimit(value *int) (int, error) {
 	return *value, nil
 }
 
-// timelineFeedResponseFromResult 将应用层信息流结果转换为 HTTP 响应，并跳过空条目。
-func timelineFeedResponseFromResult(result *applicationfeed.TimelineFeedResult) timelineFeedResponse {
+// feedItemsResponseFromResult 将应用层信息流结果转换为 HTTP 响应，并跳过空条目。
+func feedItemsResponseFromResult(result *applicationfeed.FeedResult) feedItemsResponse {
 	if result == nil {
-		return timelineFeedResponse{Items: []feedItemResponse{}}
+		return feedItemsResponse{Items: []feedItemResponse{}}
 	}
 	items := make([]feedItemResponse, 0, len(result.Items))
 	for _, item := range result.Items {
@@ -157,7 +160,7 @@ func timelineFeedResponseFromResult(result *applicationfeed.TimelineFeedResult) 
 			PublishedAt:     item.PublishedAt,
 		})
 	}
-	return timelineFeedResponse{
+	return feedItemsResponse{
 		Scene:      string(result.Scene),
 		Items:      items,
 		NextCursor: result.NextCursor,

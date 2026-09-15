@@ -54,15 +54,8 @@ func WithFeedCache(cache FeedCache) Option {
 	}
 }
 
-// WithTimelineCache 保留原有装配入口，为时间线 Feed 启用读缓存。
-func WithTimelineCache(cache FeedCache) Option {
-	return func(s *Service) {
-		strategy, ok := s.strategies[domainfeed.SceneTimeline].(*TimelineStrategy)
-		if ok {
-			strategy.cache = cache
-		}
-	}
-}
+// WithTimelineCache 为时间线 Feed 启用读缓存，兼容既有装配代码。
+func WithTimelineCache(cache FeedCache) Option { return WithFeedCache(cache) }
 
 // NewService 创建使用指定信息流仓储的应用服务。
 func NewService(repo domainfeed.Repository, options ...Option) *Service {
@@ -111,12 +104,17 @@ func (s *Service) GetFeed(ctx context.Context, req FeedRequest) (*FeedResult, er
 }
 
 // GetTimelineFeed 查询时间线视频流，处理游标分页并生成下一页游标。
-func (s *Service) GetTimelineFeed(ctx context.Context, cursor string, limit int) (*TimelineFeedResult, error) {
+func (s *Service) GetTimelineFeed(ctx context.Context, cursor string, limit int) (*FeedResult, error) {
 	return s.GetFeed(ctx, FeedRequest{
 		Scene:  domainfeed.SceneTimeline,
 		Cursor: cursor,
 		Limit:  limit,
 	})
+}
+
+// RefreshTimelineFeed 从时间线起点查询视频流，兼容既有调用方。
+func (s *Service) RefreshTimelineFeed(ctx context.Context, limit int) (*FeedResult, error) {
+	return s.RefreshFeed(ctx, limit)
 }
 
 // NewTimelineStrategy 创建一个时间线排序策略，可作为 latest 等场景的基础实现。
@@ -222,8 +220,8 @@ func encodeHotWindowCursor(cursor *domainfeed.HotCursor) string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// RefreshTimelineFeed 从时间线起点查询视频流，适用于刷新首页数据。
-func (s *Service) RefreshTimelineFeed(ctx context.Context, limit int) (*TimelineFeedResult, error) {
+// RefreshFeed 从时间线起点查询视频流，适用于刷新首页数据。
+func (s *Service) RefreshFeed(ctx context.Context, limit int) (*FeedResult, error) {
 	return s.GetTimelineFeed(ctx, "", limit)
 }
 
