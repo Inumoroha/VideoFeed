@@ -100,6 +100,7 @@ const actionStatJSONTTL = 15 * time.Second
 // FeedCache 使用 Redis 保存 Feed 查询结果。
 type redisWatchCmdable interface {
 	redis.Cmdable
+	Pipeline() redis.Pipeliner
 	Watch(context.Context, func(*redis.Tx) error, ...string) error
 }
 
@@ -149,6 +150,8 @@ func (c *FeedCache) GetCards(ctx context.Context, ids []int64) (map[int64]*domai
 
 // SetCards 批量写入视频卡片缓存。
 func (c *FeedCache) SetCards(ctx context.Context, m map[int64]*domainfeed.FeedCard, ttl time.Duration) error {
+	pipe := c.client.Pipeline()
+	queued := false
 	for id, v := range m {
 		if v == nil || v.VideoID <= 0 {
 			continue
@@ -157,11 +160,14 @@ func (c *FeedCache) SetCards(ctx context.Context, m map[int64]*domainfeed.FeedCa
 		if e != nil {
 			return e
 		}
-		if e = c.client.Set(ctx, feedCardKey(id), b, ttl).Err(); e != nil {
-			return e
-		}
+		pipe.Set(ctx, feedCardKey(id), b, ttl)
+		queued = true
 	}
-	return nil
+	if !queued {
+		return nil
+	}
+	_, e := pipe.Exec(ctx)
+	return e
 }
 
 // GetStats 批量读取视频计数缓存。
@@ -193,6 +199,8 @@ func (c *FeedCache) GetStats(ctx context.Context, ids []int64) (map[int64]*domai
 
 // SetStats 批量写入视频计数缓存。
 func (c *FeedCache) SetStats(ctx context.Context, m map[int64]*domainfeed.FeedStat, ttl time.Duration) error {
+	pipe := c.client.Pipeline()
+	queued := false
 	for id, v := range m {
 		if v == nil || v.VideoID <= 0 {
 			continue
@@ -201,11 +209,14 @@ func (c *FeedCache) SetStats(ctx context.Context, m map[int64]*domainfeed.FeedSt
 		if e != nil {
 			return e
 		}
-		if e = c.client.Set(ctx, feedStatKey(id), b, ttl).Err(); e != nil {
-			return e
-		}
+		pipe.Set(ctx, feedStatKey(id), b, ttl)
+		queued = true
 	}
-	return nil
+	if !queued {
+		return nil
+	}
+	_, e := pipe.Exec(ctx)
+	return e
 }
 
 // AddHotScore 将互动热度写入分钟粒度的 Redis ZSET。
@@ -227,10 +238,21 @@ func (c *FeedCache) ListHotWindowPage(ctx context.Context, end time.Time, offset
 	}
 	end = end.UTC().Truncate(time.Minute)
 	key := fmt.Sprintf("feed:hot:window:v1:%d", end.Unix())
-	if _, e := c.client.ZUnionStore(ctx, key, &redis.ZStore{Keys: hotWindowMinuteKeys(end), Aggregate: "SUM"}).Result(); e != nil {
+	exists, e := c.client.Exists(ctx, key).Result()
+	if e != nil {
 		return nil, e
 	}
-	_ = c.client.Expire(ctx, key, hotWindowCacheTTL).Err()
+	if exists == 0 {
+		if _, e = c.client.ZUnionStore(ctx, key, &redis.ZStore{Keys: hotWindowMinuteKeys(end), Aggregate: "SUM"}).Result(); e != nil {
+			return nil, e
+		}
+		pipe := c.client.Pipeline()
+		pipe.ZRemRangeByScore(ctx, key, "-inf", "0")
+		pipe.Expire(ctx, key, hotWindowCacheTTL)
+		if _, e = pipe.Exec(ctx); e != nil {
+			return nil, e
+		}
+	}
 	vs, e := c.client.ZRevRangeWithScores(ctx, key, int64(offset), int64(offset+limit-1)).Result()
 	if e != nil {
 		return nil, e
