@@ -142,7 +142,7 @@ type User struct {}
 ```go
 type CreateResult struct {}
 type LoginResult struct {}
-type TimelineFeedResult struct {}
+type FeedResult struct {}
 type CommentListResult struct {}
 type ActionResult struct {}
 ```
@@ -217,8 +217,8 @@ CreatePublished
 Get
 Delete
 ListByAuthor
-GetTimelineFeed
-RefreshTimelineFeed
+GetFeed(scene=timeline)
+RefreshFeed
 Like
 Unlike
 Favorite
@@ -574,3 +574,4 @@ git diff --check
 - `api/openapi.yaml`、模块文档和受影响的 `api/debug.http` 已同步。
 - OpenAPI 的路径、字段、状态码和示例已与 Gin 路由和 handler 一致，并可被正常解析。
 - 新增或修改的函数和结构体均已添加紧邻的中文注释。
+

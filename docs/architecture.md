@@ -181,14 +181,14 @@ sequenceDiagram
   H-->>C: 201 Created
 
   C->>R: GET /api/feed-items?cursor=...&limit=...
-  R->>H: Feed.Timeline
-  H->>S: GetTimelineFeed
-  S->>Repo: ListTimelineFeed
+  R->>H: Feed.ListFeedItems
+  H->>S: GetFeed(scene=timeline)
+  S->>Repo: ListFeed
   Repo->>DB: SELECT videos LEFT JOIN users LEFT JOIN video_stat
   DB-->>Repo: 返回 Feed 行
   Repo-->>S: 返回 FeedItem 列表
   S-->>H: 返回 items + next_cursor + has_more
-  H-->>C: 返回 Timeline Feed
+  H-->>C: 返回 timeline feed items
 
   C->>R: POST /api/interactions/like (Bearer JWT)
   R->>Auth: 校验访问令牌
@@ -348,3 +348,4 @@ flowchart TB
 - 数据持久化使用 MySQL，GORM 自动迁移 `users`、`videos`、`video_stat`、`interaction_action`、`interaction_action_idempotency` 与 `interaction_comment` 表。
 - Feed 当前采用 Timeline 策略，按 `published_at DESC, id DESC` 排序，并通过 Base64 游标分页。
 - 推荐、审核、消息、治理和监控模块作为演进边界保留；已落地的互动模块后续可接入异步事件和独立服务。
+
