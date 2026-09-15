@@ -9,6 +9,7 @@ type Config struct {
 	Database DatabaseConfig `mapstructure:"database"`
 	Auth     AuthConfig     `mapstructure:"auth"`
 	Redis    RedisConfig    `mapstructure:"redis"`
+	RabbitMQ RabbitMQConfig `mapstructure:"rabbitmq"`
 }
 
 // AppConfig 是应用配置结构体
@@ -52,4 +53,12 @@ type RedisConfig struct {
 	Addr     string `mapstructure:"addr"`
 	Password string `mapstructure:"password"`
 	DB       int    `mapstructure:"db"`
+}
+
+// RabbitMQConfig 保存互动事件队列的连接和拓扑配置。
+type RabbitMQConfig struct {
+	URL                  string `mapstructure:"url"`
+	InteractionExchange  string `mapstructure:"interaction_exchange"`
+	ActionChangedQueue   string `mapstructure:"action_changed_queue"`
+	ActionChangedRouting string `mapstructure:"action_changed_routing"`
 }

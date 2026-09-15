@@ -26,3 +26,8 @@ redis:
     addr: "redis:6379"
     password: ""
     db: 0
+rabbitmq:
+    url: "amqp://rabbitmq:rabbitmq_password@rabbitmq_container:5672/"
+    interaction_exchange: "videofeed.interaction"
+    action_changed_queue: "videofeed.interaction.action_changed"
+    action_changed_routing: "interaction.action_changed"
