@@ -187,7 +187,7 @@ LIMIT ?`
 	return feedPageItemsFromModels(models), nil
 }
 
-// BatchGetFeedCards 批量读取视频卡片展示字段，缓存缺失时由应用层调用。
+// BatchGetFeedCards 关联 users 表批量读取视频和作者展示字段，供缓存缺失时回源。
 func (r *Repository) BatchGetFeedCards(ctx context.Context, videoIDs []int64) (map[int64]*domainfeed.FeedCard, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("feed repository is not initialized")
@@ -201,7 +201,7 @@ func (r *Repository) BatchGetFeedCards(ctx context.Context, videoIDs []int64) (m
 	err := r.db.WithContext(ctx).
 		Table("videos AS v").
 		Select("v.id AS video_id, v.author_id, a.nickname AS author_nickname, a.avatar_url AS author_avatar_url, v.title, v.description, v.media_url, v.cover_url").
-		Joins("LEFT JOIN account AS a ON a.id = v.author_id").
+		Joins("LEFT JOIN users AS a ON a.id = v.author_id").
 		Where("v.id IN ? AND v.status = ? AND v.published_at IS NOT NULL", videoIDs, domainvideo.StatusPublished).
 		Scan(&models).
 		Error
