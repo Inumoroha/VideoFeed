@@ -60,6 +60,9 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	if err := gormDB.AutoMigrate(&relationpersistence.FollowModel{}, &relationpersistence.RelationStatModel{}, &relationpersistence.FollowIdempotencyModel{}); err != nil {
 		return fmt.Errorf("migrate relations: %w", err)
 	}
+	if err := gormDB.AutoMigrate(&feedpersistence.InboxModel{}); err != nil {
+		return fmt.Errorf("migrate feed inbox: %w", err)
+	}
 	if err := videopersistence.EnsureStats(gormDB); err != nil {
 		return fmt.Errorf("ensure video stats: %w", err)
 	}
