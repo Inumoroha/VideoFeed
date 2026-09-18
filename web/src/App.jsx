@@ -12,6 +12,12 @@ const FEED_SCENES = [
         icon: "schedule",
     },
     {
+        key: "following",
+        label: "关注流",
+        route: "/following",
+        icon: "subscriptions",
+    },
+    {
         key: "hot",
         label: "热门榜单",
         route: "/hotfeed",
@@ -429,7 +435,7 @@ function TopNav({ user, authenticated, onNavigate, onLogout }) {
     );
 }
 
-// FeedPage 加载指定场景的视频流，并处理播放切换、关注和评论交互。
+// FeedPage 加载指定场景的视频流，提示关注流登录，并处理播放切换、关注和评论交互。
 function FeedPage({ feedScene, session, onNavigate }) {
     const [items, setItems] = useState([]);
     const [index, setIndex] = useState(0);
@@ -454,9 +460,21 @@ function FeedPage({ feedScene, session, onNavigate }) {
     const currentFeedScene =
         FEED_SCENES.find((scene) => scene.key === feedScene) || FEED_SCENES[0];
 
-    // loadFeed 加载当前场景首页，并返回阻止过期响应更新状态的清理函数。
+    // loadFeed 加载当前场景首页，处理关注流缺少身份或认证失效，并返回阻止过期响应更新状态的清理函数。
     const loadFeed = useCallback(() => {
         let live = true;
+        if (feedScene === "following" && !session.token) {
+            setSwipe(null);
+            setItems([]);
+            setIndex(0);
+            setCommentsOpen(false);
+            setFeedError("");
+            setFeedState("auth");
+            return () => {
+                live = false;
+            };
+        }
+
         setFeedState("loading");
         setFeedError("");
         apiRequest(
@@ -473,6 +491,13 @@ function FeedPage({ feedScene, session, onNavigate }) {
             })
             .catch((error) => {
                 if (!live) return;
+                if (error.status === 401 && feedScene === "following") {
+                    setItems([]);
+                    setIndex(0);
+                    setCommentsOpen(false);
+                    setFeedState("auth");
+                    return;
+                }
                 setItems([]);
                 setFeedError(
                     error.message || `${currentFeedScene.label}加载失败`,
@@ -940,6 +965,14 @@ function FeedPage({ feedScene, session, onNavigate }) {
                     <FeedMessage
                         icon="hourglass_top"
                         title={`正在加载${currentFeedScene.label}`}
+                    />
+                )}
+                {feedState === "auth" && (
+                    <FeedMessage
+                        icon="lock"
+                        title="登录后查看关注流"
+                        action="登录"
+                        onAction={() => onNavigate("/auth")}
                     />
                 )}
                 {feedState === "error" && (
