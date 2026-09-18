@@ -40,7 +40,7 @@ hot_score = like_count * 3 + comment_count * 5 + favorite_count * 4
 
 ## 3. 数据表设计（最小实现）
 
-Feed 依赖已有 `videos`、`users` 和 `video_stat` 表：`videos` 保存视频内容、作者 ID、发布状态和发布时间；`users` 提供作者昵称和头像；`video_stat` 提供互动计数。查询只返回已发布且 `published_at` 不为空的视频，关注流还使用 `feed_inbox`、`user_follow` 和 `user_relation_stat` 表。
+Feed 依赖已有 `videos`、`users` 和 `video_stat` 表：`videos` 保存视频内容、作者 ID、发布状态和发布时间；`users` 提供作者昵称和头像；`video_stat` 提供互动计数。查询只返回已发布且 `published_at` 不为空的视频，关注流还使用 `user_follow` 和 `user_relation_stat`；历史 `feed_inbox` 表保留，但不再参与发布与读取。
 
 ## 4. Timeline 访问优化
 
@@ -77,19 +77,23 @@ feed:timeline:v1:limit:{limit}:cursor:{sha1(cursor)}
 
 `GET /api/feed-items?scene=following` 和 `POST /api/feed/query` 的 `scene=following` 均使用当前访问令牌的用户身份。请求体不接受用于覆盖身份的用户编号。未提供令牌或令牌无效时返回 `401 {"error":"viewer is required"}`，非法 limit、cursor 或未知场景返回 400，数据库读取失败返回 500。
 
-- 普通作者：粉丝数小于 `BigCreatorFollowerThreshold`（10,000），发布视频时在同一数据库事务内创建视频、初始统计，并向当时有效关注者的 `feed_inbox` 写入条目。
-- 大作者：粉丝数达到阈值时跳过扇出，查询关注流时根据有效关注关系和当前粉丝数拉取视频。
-- 两部分通过 SQL `UNION` 去重，仅保留当前仍有效关注、已发布且发布时间非空的视频，按 `published_at DESC, video_id DESC` 分页。同一时间戳以视频 ID 保证稳定顺序。
-- 收件箱保存 ID、用户 ID、视频 ID、作者 ID、发布时间和创建时间。`(user_id, video_id)` 联合唯一索引配合 PostgreSQL `ON CONFLICT ... DO UPDATE` 原子更新重复条目的发布时间；写入失败会回滚整个发布事务，后续可使用原幂等键重试。
-- 关注页每次读取数据库，不复用公共分页缓存；仅共用卡片和计数缓存，缓存读取失败回源，回填失败不影响成功响应。
+- 发布事务只保存 `videos` 和 `video_stat`，提交成功后发送 `PublishedEvent`；幂等重放不再发消息。事件携带事件编号、视频和作者编号、标题、描述、媒体地址、封面地址、发布时间与发生时间。
+- 普通作者：粉丝数小于 `BigCreatorFollowerThreshold`（10,000），消费者按每批 500 名有效粉丝，将视频写入 Redis `feed:following:inbox:v1:{userId}`，最多保留 1000 条。
+- 大作者：粉丝数达到阈值时只写 `feed:following:author:v1:{authorId}`，最多保留 500 条，查询时与用户 inbox 合并。
+- 索引使用有序集合去重，事务管道连续执行添加、裁剪和 30 天有效期刷新。重复投递可安全重试，既有互动缓存的 WATCH 并发保护保持不变。
+- 消费者先预热卡片（15 分钟）和统计（15 秒）。任一读取、写入或粉丝批次失败，消息重新入队；无效 JSON 拒绝且不重新入队，成功后确认。
+- 读取时查询全部有效关注作者，过滤取关条目，并按完整发布时间和视频 ID 倒序去重分页；避免参考实现仅以大作者列表过滤导致普通作者丢失。索引不足一页、缺失、不可用或命中已删除条目时回源 PostgreSQL。
+- 命中索引仍批量核验视频公开状态及关注关系，避免缓存卡片展示已删除视频；不使用跨用户共享的分页缓存。最后一页非空时仍有 `next_cursor`，以 `has_more=false` 停止翻页。
 
-保持参考提交的边界：普通作者不会向新关注用户补发历史视频，作者跨阈值时没有历史收件箱回填。取关后旧收件箱条目保留，但查询时排除。最后一页非空时仍有 `next_cursor`，应以 `has_more=false` 停止翻页。
+行为边界：消息发布与数据库提交不是同一事务，发送失败不回滚视频，未加入发布确认、持久化事件发件箱或自动重连。索引有容量和有效期限制；完整的一页索引可能暂时缺少消费中的新视频或新关注作者历史，当前实现没有全量完整性水位或历史回填。数据库回退会返回有效关注作者的全部公开视频。
 
 ### 部署与验证
 
-启动时 `internal/router/register.go` 通过 AutoMigrate 创建 `feed_inbox` 表及索引，无新增配置、环境变量、服务或依赖。开发配置在 `configs/config.yaml`，容器配置在 `configs/config.docker.yaml`；沿用根目录 `docker-compose.yaml` 的 PostgreSQL 数据卷和健康依赖。
+开发配置在 `configs/config.yaml`，容器配置在 `configs/config.docker.yaml`。新增 `rabbitmq.video_exchange`、`video_published_queue`、`video_published_routing`，默认分别为 `videofeed.video`、`videofeed.video.published` 和 `video.published`。支持环境变量 `RABBITMQ_VIDEO_EXCHANGE`、`RABBITMQ_VIDEO_PUBLISHED_QUEUE`、`RABBITMQ_VIDEO_PUBLISHED_ROUTING`。在容器部署中覆盖环境变量时，需要将其传入 API 容器。
 
-在仓库根目录运行 `go test ./...`、`go vet ./...` 和 `docker compose config --quiet`。使用 `docker compose up -d --build` 启动后，API 端口为 9000，Web 端口为 5173，宿主 PostgreSQL 端口为 5433。迁移明细和验证边界见 [迁移审计](../migration-1517e5a.md)。
+沿用根目录 `docker-compose.yaml` 的 PostgreSQL、Redis、RabbitMQ、数据卷、健康检查和依赖顺序，无新服务或 Go 依赖。RabbitMQ 不可用时启动记录错误并禁用发布器，Feed 仍能回源数据库；消费者运行后连接故障不自动重连，需要恢复服务连接。消息服务账号必须与部署配置一致。
+
+在仓库根目录运行 `go test ./...`、`go vet ./...` 和 `docker compose config --quiet`。使用 `docker compose up -d --build` 启动后，API 端口为 9000，Web 端口为 5173，宿主 PostgreSQL 端口为 5433。完整映射、适配差异和验证结果见 [异步迁移审计](../migration-9834644.md)。
 
 ## 6. 前端关注流入口
 

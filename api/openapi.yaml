@@ -389,6 +389,7 @@ paths:
       description: >-
         scene 默认 timeline，支持 timeline、hot、following，参数会去除首尾空白并转为小写。
         following 必须提供有效的 Bearer 访问令牌；未提供或无效令牌按匿名处理并返回 401。
+        following 使用异步分发索引，发布后可能短暂延迟；索引缺失、不足或故障时回源数据库。
         其他场景可匿名访问。关注流按发布时间和视频 ID 倒序排列，合并收件箱与大作者拉取结果。
       security:
         - {}
@@ -425,6 +426,7 @@ paths:
       description: >-
         scene 默认 timeline，支持 timeline、hot、following，参数会去除首尾空白并转为小写。
         following 必须提供有效的 Bearer 访问令牌；未提供或无效令牌按匿名处理并返回 401。
+        following 使用异步分发索引，发布后可能短暂延迟；索引缺失、不足或故障时回源数据库。
         其他场景可匿名访问。关注流按发布时间和视频 ID 倒序排列，合并收件箱与大作者拉取结果。
       security:
         - {}
