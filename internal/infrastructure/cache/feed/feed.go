@@ -14,18 +14,34 @@ import (
 	"time"
 )
 
-// SetActionState 在 Redis 中保存用户互动状态并更新视频计数。
+// SetActionState 仅监视用户行为键并事务更新分片，提交后聚合计数；冲突和读取失败返回错误。
 func (c *FeedCache) SetActionState(ctx context.Context, userID, videoID int64, actionType string, active bool, idempotencyKey string, initial *domaininteraction.VideoStat) (*applicationinteraction.ActionStateResult, error) {
 	// Redis Cmdable 在当前实现中通过事务管道完成状态与计数的一致写入。
 	var result *applicationinteraction.ActionStateResult
-	err := c.client.Watch(ctx, func(tx *redis.Tx) error {
+	actionType, err := domaininteraction.NormalizeActionType(actionType)
+	if err != nil {
+		return nil, err
+	}
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	err = c.client.Watch(ctx, func(tx *redis.Tx) error {
 		var e error
 		result, e = c.setActionStateWithClient(ctx, tx, userID, videoID, actionType, active, idempotencyKey, initial)
 		return e
-	}, interactionActionKey(userID, videoID, actionType), interactionStatCounterKey(videoID), feedStatKey(videoID))
-	return result, err
+	}, interactionActionKey(userID, videoID, actionType))
+	if err != nil {
+		return nil, err
+	}
+	stat, err := actionStat(ctx, c.client, interactionStatCounterBaseKey(videoID), interactionStatCounterShardKeys(videoID), feedStatKey(videoID), videoID, initial)
+	if err != nil {
+		return nil, err
+	}
+	result.LikeCount = stat.LikeCount
+	result.FavoriteCount = stat.FavoriteCount
+	_ = setActionStatJSON(ctx, c.client, feedStatKey(videoID), stat)
+	return result, nil
 }
 
+// setActionStateWithClient 在受监视事务中保存行为并原子累加分片，重复幂等键不增加计数。
 func (c *FeedCache) setActionStateWithClient(ctx context.Context, client redis.Cmdable, userID, videoID int64, actionType string, active bool, idempotencyKey string, initial *domaininteraction.VideoStat) (*applicationinteraction.ActionStateResult, error) {
 	actionType, err := domaininteraction.NormalizeActionType(actionType)
 	if err != nil {
@@ -51,26 +67,12 @@ func (c *FeedCache) setActionStateWithClient(ctx context.Context, client redis.C
 			delta = -1
 		}
 	}
-	stat := &domainfeed.FeedStat{VideoID: videoID}
-	counterKey := interactionStatCounterKey(videoID)
-	counters, e := client.HGetAll(ctx, counterKey).Result()
-	if e != nil {
-		return nil, e
+	baseStat, err := actionStatBaseInit(ctx, client, videoID, initial)
+	if err != nil {
+		return nil, err
 	}
-	if len(counters) > 0 {
-		stat.LikeCount, _ = strconv.Atoi(counters["like_count"])
-		stat.CommentCount, _ = strconv.Atoi(counters["comment_count"])
-		stat.FavoriteCount, _ = strconv.Atoi(counters["favorite_count"])
-	} else if initial != nil {
-		stat.LikeCount = initial.LikeCount
-		stat.CommentCount = initial.CommentCount
-		stat.FavoriteCount = initial.FavoriteCount
-	}
-	if actionType == domaininteraction.ActionTypeLike {
-		stat.LikeCount = clampRedisCount(stat.LikeCount + delta)
-	} else {
-		stat.FavoriteCount = clampRedisCount(stat.FavoriteCount + delta)
-	}
+	baseKey := interactionStatCounterBaseKey(videoID)
+	shardKey := interactionStatCounterShardKey(videoID, interactionStatCounterShardIndex(userID))
 	_, err = client.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		v := "0"
 		if active {
@@ -78,17 +80,39 @@ func (c *FeedCache) setActionStateWithClient(ctx context.Context, client redis.C
 		}
 		p.HSet(ctx, key, "active", v, "idempotency_key", strings.TrimSpace(idempotencyKey))
 		p.Expire(ctx, key, actionStateTTL)
-		b, _ := json.Marshal(stat)
-		p.HSet(ctx, counterKey, "like_count", stat.LikeCount, "comment_count", stat.CommentCount, "favorite_count", stat.FavoriteCount)
-		p.Expire(ctx, counterKey, actionStatTTL)
-		p.Set(ctx, feedStatKey(videoID), b, actionStatJSONTTL)
+		queueActionStatBaseInit(ctx, p, baseKey, baseStat)
+		p.Expire(ctx, baseKey, actionStatTTL)
+		if delta != 0 {
+			p.HIncrBy(ctx, shardKey, interactionStatField(actionType), int64(delta))
+		}
+		p.Expire(ctx, shardKey, actionStatTTL)
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &applicationinteraction.ActionStateResult{VideoID: videoID, ActionType: actionType, Active: active, LikeCount: stat.LikeCount, FavoriteCount: stat.FavoriteCount, Delta: delta, IdempotencyKey: strings.TrimSpace(idempotencyKey)}, nil
+	return &applicationinteraction.ActionStateResult{VideoID: videoID, ActionType: actionType, Active: active, Delta: delta, IdempotencyKey: strings.TrimSpace(idempotencyKey)}, nil
 }
+
+// redisActionStatReader 提供统计哈希和 JSON 的读取能力。
+type redisActionStatReader interface {
+	HGetAll(ctx context.Context, key string) *redis.MapStringStringCmd
+	Get(ctx context.Context, key string) *redis.StringCmd
+}
+
+// redisActionStatWriter 提供聚合统计 JSON 的写入能力。
+type redisActionStatWriter interface {
+	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
+}
+
+// redisStatCacheClient 组合批量统计读取与回填所需的缓存接口。
+type redisStatCacheClient interface {
+	redisActionStatReader
+	redisActionStatWriter
+	MGet(ctx context.Context, keys ...string) *redis.SliceCmd
+}
+
+const actionStatCounterShardCount = 16
 
 const hotWindowMinutes = 60
 const hotMinuteBucketTTL = 2 * time.Hour
@@ -97,13 +121,14 @@ const actionStateTTL = 30 * 24 * time.Hour
 const actionStatTTL = 24 * time.Hour
 const actionStatJSONTTL = 15 * time.Second
 
-// FeedCache 使用 Redis 保存 Feed 查询结果。
+// redisWatchCmdable 提供缓存读写和乐观事务。
 type redisWatchCmdable interface {
 	redis.Cmdable
 	Pipeline() redis.Pipeliner
 	Watch(context.Context, func(*redis.Tx) error, ...string) error
 }
 
+// FeedCache 使用 Redis 保存信息流和互动计数缓存。
 type FeedCache struct{ client redisWatchCmdable }
 
 // clampRedisCount 将 Redis 互动计数限制为不小于零。
@@ -171,30 +196,50 @@ func (c *FeedCache) SetCards(ctx context.Context, m map[int64]*domainfeed.FeedCa
 }
 
 // GetStats 批量读取视频计数缓存。
-func (c *FeedCache) GetStats(ctx context.Context, ids []int64) (map[int64]*domainfeed.FeedStat, error) {
-	m := map[int64]*domainfeed.FeedStat{}
-	if len(ids) == 0 {
-		return m, nil
+func (c *FeedCache) GetStats(ctx context.Context, videoIDs []int64) (map[int64]*domainfeed.FeedStat, error) {
+	return getStats(ctx, c.client, videoIDs)
+}
+
+// getStats 优先读取 JSON，未命中时聚合分片并尽力回填缓存。
+func getStats(ctx context.Context, client redisStatCacheClient, videoIDs []int64) (map[int64]*domainfeed.FeedStat, error) {
+	stats := map[int64]*domainfeed.FeedStat{}
+	if len(videoIDs) == 0 {
+		return stats, nil
 	}
-	vs, e := c.client.MGet(ctx, cacheKeys(ids, feedStatKey)...).Result()
-	if e != nil {
-		return nil, e
+
+	values, err := client.MGet(ctx, cacheKeys(videoIDs, feedStatKey)...).Result()
+	if err != nil {
+		return nil, err
 	}
-	for i, v := range vs {
-		b, ok := cacheValueBytes(v)
+	for index, value := range values {
+		content, ok := cacheValueBytes(value)
 		if !ok {
 			continue
 		}
-		var s domainfeed.FeedStat
-		if json.Unmarshal(b, &s) != nil {
+		var stat domainfeed.FeedStat
+		if err := json.Unmarshal(content, &stat); err != nil {
 			continue
 		}
-		if s.VideoID <= 0 {
-			s.VideoID = ids[i]
+		if stat.VideoID <= 0 {
+			stat.VideoID = videoIDs[index]
 		}
-		m[s.VideoID] = &s
+		stats[stat.VideoID] = &stat
 	}
-	return m, nil
+	for _, videoID := range videoIDs {
+		if stats[videoID] != nil {
+			continue
+		}
+		stat, ok, err := actionStatFromCache(ctx, client, videoID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		stats[videoID] = stat
+		_ = setActionStatJSON(ctx, client, feedStatKey(videoID), stat)
+	}
+	return stats, nil
 }
 
 // SetStats 批量写入视频计数缓存。
@@ -333,4 +378,245 @@ func cacheValueBytes(v any) ([]byte, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// actionStat 聚合基数与分片，完全未命中时返回零计数。
+func actionStat(ctx context.Context, client redisActionStatReader, counterBaseKey string, counterShardKeys []string, jsonKey string, videoID int64, initialStat *domaininteraction.VideoStat) (*domainfeed.FeedStat, error) {
+	stat, _, err := actionStatWithPresence(ctx, client, counterBaseKey, counterShardKeys, jsonKey, videoID, initialStat)
+	if err != nil {
+		return nil, err
+	}
+	if stat == nil {
+		return &domainfeed.FeedStat{VideoID: videoID}, nil
+	}
+	return stat, nil
+}
+
+// actionStatFromCache 读取缓存中的基数与分片并报告是否命中。
+func actionStatFromCache(ctx context.Context, client redisActionStatReader, videoID int64) (*domainfeed.FeedStat, bool, error) {
+	return actionStatWithPresence(ctx, client, interactionStatCounterBaseKey(videoID), interactionStatCounterShardKeys(videoID), feedStatKey(videoID), videoID, nil)
+}
+
+// actionStatWithPresence 按基数、旧计数及初值回退后叠加分片。
+func actionStatWithPresence(ctx context.Context, client redisActionStatReader, counterBaseKey string, counterShardKeys []string, jsonKey string, videoID int64, initialStat *domaininteraction.VideoStat) (*domainfeed.FeedStat, bool, error) {
+	stat := &domainfeed.FeedStat{VideoID: videoID}
+	found := false
+	values, err := client.HGetAll(ctx, counterBaseKey).Result()
+	if err != nil {
+		return nil, false, err
+	}
+	if len(values) > 0 {
+		applyActionStatFields(stat, values)
+		found = true
+	} else {
+		legacyStat, ok, err := actionStatFallback(ctx, client, interactionStatCounterLegacyKey(videoID), jsonKey, videoID, initialStat)
+		if err != nil {
+			return nil, false, err
+		}
+		if ok {
+			stat = legacyStat
+			found = true
+		}
+	}
+	shardFound, err := applyActionStatShardDeltas(ctx, client, stat, counterShardKeys)
+	if err != nil {
+		return nil, false, err
+	}
+	found = found || shardFound
+	if !found {
+		return nil, false, nil
+	}
+	return stat, true, nil
+}
+
+// actionStatFallback 按旧计数、JSON、初始统计的顺序读取回退值。
+func actionStatFallback(ctx context.Context, client redisActionStatReader, legacyCounterKey string, jsonKey string, videoID int64, initialStat *domaininteraction.VideoStat) (*domainfeed.FeedStat, bool, error) {
+	stat := &domainfeed.FeedStat{VideoID: videoID}
+	values, err := client.HGetAll(ctx, legacyCounterKey).Result()
+	if err != nil {
+		return nil, false, err
+	}
+	if len(values) > 0 {
+		applyActionStatFields(stat, values)
+		return stat, true, nil
+	}
+
+	content, err := client.Get(ctx, jsonKey).Bytes()
+	if err == redis.Nil {
+		if initialStat != nil {
+			stat.LikeCount = initialStat.LikeCount
+			stat.CommentCount = initialStat.CommentCount
+			stat.FavoriteCount = initialStat.FavoriteCount
+			return stat, true, nil
+		}
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if err := json.Unmarshal(content, stat); err != nil {
+		return nil, false, nil
+	}
+	if stat.VideoID <= 0 {
+		stat.VideoID = videoID
+	}
+	return stat, true, nil
+}
+
+// actionStatBaseInit 优先选择旧计数作为基数，其次使用仓储初值。
+func actionStatBaseInit(ctx context.Context, client redisActionStatReader, videoID int64, initialStat *domaininteraction.VideoStat) (*domaininteraction.VideoStat, error) {
+	values, err := client.HGetAll(ctx, interactionStatCounterLegacyKey(videoID)).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(values) > 0 {
+		return &domaininteraction.VideoStat{
+			VideoID:       videoID,
+			LikeCount:     actionStatFieldInt(values, "like_count"),
+			CommentCount:  actionStatFieldInt(values, "comment_count"),
+			FavoriteCount: actionStatFieldInt(values, "favorite_count"),
+		}, nil
+	}
+	if initialStat != nil {
+		return initialStat, nil
+	}
+	return &domaininteraction.VideoStat{VideoID: videoID}, nil
+}
+
+// queueActionStatBaseInit 在事务管道中只初始化缺失的基数字段。
+func queueActionStatBaseInit(ctx context.Context, pipe redis.Pipeliner, counterBaseKey string, initialStat *domaininteraction.VideoStat) {
+	stat := &domaininteraction.VideoStat{}
+	if initialStat != nil {
+		stat = initialStat
+	}
+	pipe.HSetNX(ctx, counterBaseKey, "like_count", stat.LikeCount)
+	pipe.HSetNX(ctx, counterBaseKey, "comment_count", stat.CommentCount)
+	pipe.HSetNX(ctx, counterBaseKey, "favorite_count", stat.FavoriteCount)
+}
+
+// setActionStatJSON 序列化聚合计数并设置短期缓存。
+func setActionStatJSON(ctx context.Context, client redisActionStatWriter, jsonKey string, stat *domainfeed.FeedStat) error {
+	content, err := json.Marshal(stat)
+	if err != nil {
+		return err
+	}
+	return client.Set(ctx, jsonKey, content, actionStatJSONTTL).Err()
+}
+
+// applyActionStatShardDeltas 汇总点赞收藏增量并将最终计数限制为非负。
+func applyActionStatShardDeltas(ctx context.Context, client redisActionStatReader, stat *domainfeed.FeedStat, shardKeys []string) (bool, error) {
+	if stat == nil || len(shardKeys) == 0 {
+		return false, nil
+	}
+
+	shardValues, err := loadActionStatShardValues(ctx, client, shardKeys)
+	if err != nil {
+		return false, err
+	}
+	found := false
+	likeDelta := 0
+	favoriteDelta := 0
+	for _, values := range shardValues {
+		if len(values) > 0 {
+			found = true
+		}
+		likeDelta += actionStatFieldInt(values, "like_count")
+		favoriteDelta += actionStatFieldInt(values, "favorite_count")
+	}
+	stat.LikeCount = clampRedisCount(stat.LikeCount + likeDelta)
+	stat.FavoriteCount = clampRedisCount(stat.FavoriteCount + favoriteDelta)
+	return found, nil
+}
+
+// loadActionStatShardValues 优先通过管道批量读分片，否则逐个读取并传递错误。
+func loadActionStatShardValues(ctx context.Context, client redisActionStatReader, shardKeys []string) ([]map[string]string, error) {
+	type pipelineProvider interface {
+		Pipeline() redis.Pipeliner
+	}
+
+	if provider, ok := client.(pipelineProvider); ok {
+		pipe := provider.Pipeline()
+		cmds := make([]*redis.MapStringStringCmd, 0, len(shardKeys))
+		for _, key := range shardKeys {
+			cmds = append(cmds, pipe.HGetAll(ctx, key))
+		}
+		if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+			return nil, err
+		}
+		values := make([]map[string]string, 0, len(cmds))
+		for _, cmd := range cmds {
+			value, err := cmd.Result()
+			if err != nil && err != redis.Nil {
+				return nil, err
+			}
+			values = append(values, value)
+		}
+		return values, nil
+	}
+
+	values := make([]map[string]string, 0, len(shardKeys))
+	for _, key := range shardKeys {
+		value, err := client.HGetAll(ctx, key).Result()
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	return values, nil
+}
+
+// applyActionStatFields 将哈希字段转换为统计计数。
+func applyActionStatFields(stat *domainfeed.FeedStat, values map[string]string) {
+	if stat == nil {
+		return
+	}
+	stat.LikeCount = actionStatFieldInt(values, "like_count")
+	stat.CommentCount = actionStatFieldInt(values, "comment_count")
+	stat.FavoriteCount = actionStatFieldInt(values, "favorite_count")
+}
+
+// actionStatFieldInt 解析计数字段，无法解析时返回零。
+func actionStatFieldInt(values map[string]string, field string) int {
+	value, _ := strconv.Atoi(values[field])
+	return value
+}
+
+// interactionStatCounterLegacyKey 返回旧版计数哈希键。
+func interactionStatCounterLegacyKey(videoID int64) string {
+	return interactionStatCounterKey(videoID)
+}
+
+// interactionStatCounterBaseKey 返回视频计数基数键。
+func interactionStatCounterBaseKey(videoID int64) string {
+	return fmt.Sprintf("%s:base", interactionStatCounterKey(videoID))
+}
+
+// interactionStatCounterShardKey 返回指定视频的计数分片键。
+func interactionStatCounterShardKey(videoID int64, shard int) string {
+	return fmt.Sprintf("%s:shard:%02d", interactionStatCounterKey(videoID), shard)
+}
+
+// interactionStatCounterShardKeys 生成全部十六个计数分片键。
+func interactionStatCounterShardKeys(videoID int64) []string {
+	keys := make([]string, 0, actionStatCounterShardCount)
+	for shard := 0; shard < actionStatCounterShardCount; shard++ {
+		keys = append(keys, interactionStatCounterShardKey(videoID, shard))
+	}
+	return keys
+}
+
+// interactionStatCounterShardIndex 按用户编号选择分片，非正编号使用零号分片。
+func interactionStatCounterShardIndex(userID int64) int {
+	if userID <= 0 {
+		return 0
+	}
+	return int(userID % actionStatCounterShardCount)
+}
+
+// interactionStatField 将互动类型映射为计数字段。
+func interactionStatField(actionType string) string {
+	if actionType == domaininteraction.ActionTypeLike {
+		return "like_count"
+	}
+	return "favorite_count"
 }
