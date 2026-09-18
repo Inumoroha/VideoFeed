@@ -52,11 +52,11 @@ func TestShardedActionConcurrency(t *testing.T) {
 	}
 }
 
-// TestShardedActionIdempotency 验证旧状态保留、重复请求、取消和旧基数迁移。
+// TestShardedActionIdempotency 验证旧状态保留、重复请求、取消和传入基数初始化。
 func TestShardedActionIdempotency(t *testing.T) {
 	cache, client := newShardTestCache(t)
 	ctx := context.Background()
-	client.HSet(ctx, interactionStatCounterLegacyKey(102), "like_count", 9)
+	client.Set(ctx, interactionStatCounterKey(102), "obsolete", 0)
 	client.HSet(ctx, interactionActionKey(42, 102, "like"), "active", "1", "idempotency_key", "old")
 	for _, step := range []struct {
 		active bool
@@ -64,7 +64,7 @@ func TestShardedActionIdempotency(t *testing.T) {
 		delta  int
 		count  int
 	}{{true, "old", 0, 9}, {false, "cancel", -1, 8}, {false, "cancel", 0, 8}, {true, "new", 1, 9}} {
-		result, err := cache.SetActionState(ctx, 42, 102, "like", step.active, step.key, nil)
+		result, err := cache.SetActionState(ctx, 42, 102, "like", step.active, step.key, &domaininteraction.VideoStat{VideoID: 102, LikeCount: 9})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -172,5 +172,35 @@ func TestFavoriteReplayKeepsOriginalState(t *testing.T) {
 	}
 	if client.HGet(ctx, interactionStatCounterShardKey(106, 2), "favorite_count").Val() != "1" {
 		t.Fatal("unexpected favorite increment")
+	}
+}
+
+// TestStatsIgnoreObsoleteCounter 验证旧哈希不再参与回退，JSON 和初始统计仍可作为来源。
+func TestStatsIgnoreObsoleteCounter(t *testing.T) {
+	cache, client := newShardTestCache(t)
+	ctx := context.Background()
+	const videoID int64 = 107
+	if err := client.HSet(ctx, interactionStatCounterKey(videoID), "like_count", 99).Err(); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := cache.GetStats(ctx, []int64{videoID})
+	if err != nil || stats[videoID] != nil {
+		t.Fatalf("obsolete counter used: stats=%+v error=%v", stats, err)
+	}
+	initial := &domaininteraction.VideoStat{VideoID: videoID, LikeCount: 4}
+	stat, err := actionStat(ctx, client, interactionStatCounterBaseKey(videoID), interactionStatCounterShardKeys(videoID), feedStatKey(videoID), videoID, initial)
+	if err != nil || stat.LikeCount != 4 {
+		t.Fatalf("stat=%+v error=%v", stat, err)
+	}
+	if err := client.Set(ctx, feedStatKey(videoID), `{"VideoID":107,"LikeCount":6}`, time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+	stat, err = actionStat(ctx, client, interactionStatCounterBaseKey(videoID), interactionStatCounterShardKeys(videoID), feedStatKey(videoID), videoID, initial)
+	if err != nil || stat.LikeCount != 6 {
+		t.Fatalf("stat=%+v error=%v", stat, err)
+	}
+	empty := actionStatBaseInit(videoID, nil)
+	if empty.VideoID != videoID || empty.LikeCount != 0 || empty.CommentCount != 0 || empty.FavoriteCount != 0 {
+		t.Fatalf("empty=%+v", empty)
 	}
 }

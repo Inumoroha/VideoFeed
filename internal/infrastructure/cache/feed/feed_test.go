@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	domaininteraction "github.com/inumoroha/video-feed/internal/domain/interaction"
-	"reflect"
 	"testing"
 	"time"
 
@@ -152,16 +151,9 @@ func TestGetStatsReadsShardedCountersOnJSONMiss(t *testing.T) {
 	}
 }
 
-// TestActionStatBaseInitPrefersLegacyCounter 验证旧计数优先于仓储初值。
-func TestActionStatBaseInitPrefersLegacyCounter(t *testing.T) {
-	ctx := context.Background()
+// TestActionStatBaseInitUsesInitialStat 验证基数直接使用传入统计。
+func TestActionStatBaseInitUsesInitialStat(t *testing.T) {
 	videoID := int64(1004)
-	redisClient := newActionStatFakeRedis()
-	redisClient.hashes[interactionStatCounterLegacyKey(videoID)] = map[string]string{
-		"like_count":     "5",
-		"comment_count":  "4",
-		"favorite_count": "3",
-	}
 	initial := &domaininteraction.VideoStat{
 		VideoID:       videoID,
 		LikeCount:     1,
@@ -169,12 +161,8 @@ func TestActionStatBaseInitPrefersLegacyCounter(t *testing.T) {
 		FavoriteCount: 1,
 	}
 
-	stat, err := actionStatBaseInit(ctx, redisClient, videoID, initial)
-	if err != nil {
-		t.Fatalf("actionStatBaseInit: %v", err)
-	}
-	expected := &domaininteraction.VideoStat{VideoID: videoID, LikeCount: 5, CommentCount: 4, FavoriteCount: 3}
-	if !reflect.DeepEqual(stat, expected) {
+	stat := actionStatBaseInit(videoID, initial)
+	if stat != initial {
 		t.Fatalf("unexpected stat: %+v", stat)
 	}
 }
