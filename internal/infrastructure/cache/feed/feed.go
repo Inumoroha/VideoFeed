@@ -67,10 +67,7 @@ func (c *FeedCache) setActionStateWithClient(ctx context.Context, client redis.C
 			delta = -1
 		}
 	}
-	baseStat, err := actionStatBaseInit(ctx, client, videoID, initial)
-	if err != nil {
-		return nil, err
-	}
+	baseStat := actionStatBaseInit(videoID, initial)
 	baseKey := interactionStatCounterBaseKey(videoID)
 	shardKey := interactionStatCounterShardKey(videoID, interactionStatCounterShardIndex(userID))
 	_, err = client.TxPipelined(ctx, func(p redis.Pipeliner) error {
@@ -397,7 +394,7 @@ func actionStatFromCache(ctx context.Context, client redisActionStatReader, vide
 	return actionStatWithPresence(ctx, client, interactionStatCounterBaseKey(videoID), interactionStatCounterShardKeys(videoID), feedStatKey(videoID), videoID, nil)
 }
 
-// actionStatWithPresence 按基数、旧计数及初值回退后叠加分片。
+// actionStatWithPresence 优先读取基数，缺失时回退至 JSON 或初始统计，再叠加分片。
 func actionStatWithPresence(ctx context.Context, client redisActionStatReader, counterBaseKey string, counterShardKeys []string, jsonKey string, videoID int64, initialStat *domaininteraction.VideoStat) (*domainfeed.FeedStat, bool, error) {
 	stat := &domainfeed.FeedStat{VideoID: videoID}
 	found := false
@@ -409,12 +406,12 @@ func actionStatWithPresence(ctx context.Context, client redisActionStatReader, c
 		applyActionStatFields(stat, values)
 		found = true
 	} else {
-		legacyStat, ok, err := actionStatFallback(ctx, client, interactionStatCounterLegacyKey(videoID), jsonKey, videoID, initialStat)
+		fallbackStat, ok, err := actionStatFallback(ctx, client, jsonKey, videoID, initialStat)
 		if err != nil {
 			return nil, false, err
 		}
 		if ok {
-			stat = legacyStat
+			stat = fallbackStat
 			found = true
 		}
 	}
@@ -429,18 +426,9 @@ func actionStatWithPresence(ctx context.Context, client redisActionStatReader, c
 	return stat, true, nil
 }
 
-// actionStatFallback 按旧计数、JSON、初始统计的顺序读取回退值。
-func actionStatFallback(ctx context.Context, client redisActionStatReader, legacyCounterKey string, jsonKey string, videoID int64, initialStat *domaininteraction.VideoStat) (*domainfeed.FeedStat, bool, error) {
+// actionStatFallback 读取 JSON 缓存，未命中时使用初始统计。
+func actionStatFallback(ctx context.Context, client redisActionStatReader, jsonKey string, videoID int64, initialStat *domaininteraction.VideoStat) (*domainfeed.FeedStat, bool, error) {
 	stat := &domainfeed.FeedStat{VideoID: videoID}
-	values, err := client.HGetAll(ctx, legacyCounterKey).Result()
-	if err != nil {
-		return nil, false, err
-	}
-	if len(values) > 0 {
-		applyActionStatFields(stat, values)
-		return stat, true, nil
-	}
-
 	content, err := client.Get(ctx, jsonKey).Bytes()
 	if err == redis.Nil {
 		if initialStat != nil {
@@ -463,24 +451,12 @@ func actionStatFallback(ctx context.Context, client redisActionStatReader, legac
 	return stat, true, nil
 }
 
-// actionStatBaseInit 优先选择旧计数作为基数，其次使用仓储初值。
-func actionStatBaseInit(ctx context.Context, client redisActionStatReader, videoID int64, initialStat *domaininteraction.VideoStat) (*domaininteraction.VideoStat, error) {
-	values, err := client.HGetAll(ctx, interactionStatCounterLegacyKey(videoID)).Result()
-	if err != nil {
-		return nil, err
-	}
-	if len(values) > 0 {
-		return &domaininteraction.VideoStat{
-			VideoID:       videoID,
-			LikeCount:     actionStatFieldInt(values, "like_count"),
-			CommentCount:  actionStatFieldInt(values, "comment_count"),
-			FavoriteCount: actionStatFieldInt(values, "favorite_count"),
-		}, nil
-	}
+// actionStatBaseInit 返回传入统计作为基数，未提供时生成指定视频的零计数。
+func actionStatBaseInit(videoID int64, initialStat *domaininteraction.VideoStat) *domaininteraction.VideoStat {
 	if initialStat != nil {
-		return initialStat, nil
+		return initialStat
 	}
-	return &domaininteraction.VideoStat{VideoID: videoID}, nil
+	return &domaininteraction.VideoStat{VideoID: videoID}
 }
 
 // queueActionStatBaseInit 在事务管道中只初始化缺失的基数字段。
@@ -579,11 +555,6 @@ func applyActionStatFields(stat *domainfeed.FeedStat, values map[string]string) 
 func actionStatFieldInt(values map[string]string, field string) int {
 	value, _ := strconv.Atoi(values[field])
 	return value
-}
-
-// interactionStatCounterLegacyKey 返回旧版计数哈希键。
-func interactionStatCounterLegacyKey(videoID int64) string {
-	return interactionStatCounterKey(videoID)
 }
 
 // interactionStatCounterBaseKey 返回视频计数基数键。
