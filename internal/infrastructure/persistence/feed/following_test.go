@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,37 +12,27 @@ import (
 	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
 )
 
-const followingSQL = `SELECT merged.video_id, merged.published_at FROM (
-SELECT v.id AS video_id, v.published_at AS published_at
-FROM feed_inbox AS fi JOIN videos AS v ON v.id = fi.video_id
-JOIN user_follow AS f ON f.user_id = fi.user_id AND f.target_user_id = v.author_id
-WHERE fi.user_id = $1 AND f.status = $2 AND v.status = $3 AND v.published_at IS NOT NULL
-UNION
-SELECT v.id AS video_id, v.published_at AS published_at
-FROM videos AS v JOIN user_follow AS f ON f.target_user_id = v.author_id
-JOIN user_relation_stat AS rs ON rs.user_id = v.author_id
-WHERE f.user_id = $4 AND f.status = $5 AND rs.follower_count >= $6 AND v.status = $7 AND v.published_at IS NOT NULL
-) AS merged`
+const followingSQL = `SELECT v.id AS video_id, v.author_id, v.published_at FROM videos AS v JOIN user_follow AS f ON f.target_user_id = v.author_id WHERE f.user_id = $1 AND f.status = $2 AND v.status = $3 AND v.published_at IS NOT NULL`
 
-// TestListFollowingPageSQL 验证真实表名、推拉去重、状态过滤、阈值、游标排序和错误传播。
+// TestListFollowingPageSQL 验证真实表名、关注关系、状态过滤、游标排序和错误传播。
 func TestListFollowingPageSQL(t *testing.T) {
 	r, mock := mockRepo(t)
 	at := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
-	mock.ExpectQuery(regexp.QuoteMeta(followingSQL+` ORDER BY merged.published_at DESC, merged.video_id DESC LIMIT $8`)).
-		WithArgs(42, 1, 2, 42, 1, 10000, 2, 101).
+	mock.ExpectQuery(regexp.QuoteMeta(followingSQL+` ORDER BY v.published_at DESC,v.id DESC LIMIT $4`)).
+		WithArgs(42, 1, 2, 101).
 		WillReturnRows(sqlmock.NewRows([]string{"video_id", "published_at"}).AddRow(7, at))
 	items, err := r.ListFollowingPage(nil, 42, nil, 999)
 	if err != nil || len(items) != 1 || items[0].VideoID != 7 || !items[0].PublishedAt.Equal(at) {
 		t.Fatalf("items=%+v err=%v", items, err)
 	}
-	query := followingSQL + ` WHERE (merged.published_at < $8 OR (merged.published_at = $9 AND merged.video_id < $10)) ORDER BY merged.published_at DESC, merged.video_id DESC LIMIT $11`
+	query := strings.Replace(followingSQL, "WHERE ", "WHERE (", 1) + ")" + ` AND ((v.published_at < $4 OR (v.published_at = $5 AND v.id < $6))) ORDER BY v.published_at DESC,v.id DESC LIMIT $7`
 	cursor := &domainfeed.TimelineCursor{PublishedAt: at, VideoID: 7}
 	failure := errors.New("database unavailable")
-	mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(42, 1, 2, 42, 1, 10000, 2, at, at, 7, 2).WillReturnError(failure)
+	mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(42, 1, 2, at, at, 7, 2).WillReturnError(failure)
 	if _, err := r.ListFollowingPage(context.Background(), 42, cursor, 2); !errors.Is(err, failure) {
 		t.Fatal(err)
 	}
-	mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(42, 1, 2, 42, 1, 10000, 2, at, at, 7, 2).WillReturnRows(sqlmock.NewRows([]string{"video_id", "published_at"}).AddRow(6, at))
+	mock.ExpectQuery(regexp.QuoteMeta(query)).WithArgs(42, 1, 2, at, at, 7, 2).WillReturnRows(sqlmock.NewRows([]string{"video_id", "published_at"}).AddRow(6, at))
 	items, err = r.ListFollowingPage(context.Background(), 42, cursor, 2)
 	if err != nil || len(items) != 1 || items[0].VideoID != 6 {
 		t.Fatalf("items=%+v err=%v", items, err)

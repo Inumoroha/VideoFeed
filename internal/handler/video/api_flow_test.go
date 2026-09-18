@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -46,6 +47,7 @@ type videoListAPIResponse struct {
 	Offset int                `json:"offset"`
 }
 
+// memoryVideoRepo 以互斥锁维护测试视频与作者幂等键索引。
 type memoryVideoRepo struct {
 	mu            sync.Mutex
 	nextID        int64
@@ -310,6 +312,12 @@ func TestVideoAPIValidation(t *testing.T) {
 
 // newVideoRouter 构造使用内存仓储和测试 JWT 配置的视频路由。
 func newVideoRouter(t *testing.T) (*gin.Engine, *authjwt.Manager) {
+	router, manager, _ := newVideoRouterWithPublisher(t, nil)
+	return router, manager
+}
+
+// newVideoRouterWithPublisher 注入发布器并创建使用真实认证中间件的视频测试路由。
+func newVideoRouterWithPublisher(t *testing.T, publisher applicationvideo.PublishedEventPublisher) (*gin.Engine, *authjwt.Manager, *memoryVideoRepo) {
 	t.Helper()
 
 	gin.SetMode(gin.TestMode)
@@ -325,7 +333,7 @@ func newVideoRouter(t *testing.T) (*gin.Engine, *authjwt.Manager) {
 	}
 
 	repo := newMemoryVideoRepo()
-	service := applicationvideo.NewService(repo)
+	service := applicationvideo.NewService(repo, applicationvideo.WithPublishedEventPublisher(publisher))
 	handler := videohandler.NewHandler(service)
 	authMiddleware := middleware.NewJWTAuthMiddleware(jwtManager)
 
@@ -337,7 +345,7 @@ func newVideoRouter(t *testing.T) (*gin.Engine, *authjwt.Manager) {
 	videos.DELETE("/:videoId", authMiddleware, handler.Delete)
 	api.GET("/users/:userId/videos", handler.ListByAuthor)
 
-	return router, jwtManager
+	return router, jwtManager, repo
 }
 
 // signTestToken 为测试用户签发访问令牌。
@@ -409,3 +417,97 @@ func publishedAtUnix(video *domainvideo.Video) int64 {
 }
 
 var _ domainvideo.Repository = (*memoryVideoRepo)(nil)
+
+// memoryVideoPublisher 以互斥锁保存测试发布事件。
+type memoryVideoPublisher struct {
+	mu     sync.Mutex
+	events []*applicationvideo.PublishedEvent
+}
+
+// PublishVideoPublished 加锁记录测试发布事件。
+func (p *memoryVideoPublisher) PublishVideoPublished(ctx context.Context, event *applicationvideo.PublishedEvent) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.events = append(p.events, event)
+	return nil
+}
+
+// EventCount 加锁读取测试发布事件总数。
+func (p *memoryVideoPublisher) EventCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.events)
+}
+
+// TestVideoPublishedEvent 验证首次创建返回二百零一并发送事件，幂等重放返回二百且不重复发送。
+func TestVideoPublishedEvent(t *testing.T) {
+	publisher := &memoryVideoPublisher{}
+	router, jwtManager, _ := newVideoRouterWithPublisher(t, publisher)
+	token := signTestToken(t, jwtManager, 42)
+
+	createResponse := performVideoJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/videos",
+		`{"title":"event video","description":"event description","media_url":"https://example.com/video.mp4","cover_url":"https://example.com/cover.jpg"}`,
+		token,
+		"create-video-event",
+	)
+	requireStatus(t, createResponse, http.StatusCreated)
+	if publisher.EventCount() != 1 {
+		t.Fatalf("unexpected published event count after create: %d", publisher.EventCount())
+	}
+
+	replayResponse := performVideoJSONRequest(
+		router,
+		http.MethodPost,
+		"/api/videos",
+		`{"title":"changed","description":"changed","media_url":"https://example.com/changed.mp4","cover_url":"https://example.com/changed.jpg"}`,
+		token,
+		"create-video-event",
+	)
+	requireStatus(t, replayResponse, http.StatusOK)
+	if publisher.EventCount() != 1 {
+		t.Fatalf("unexpected published event count after replay: %d", publisher.EventCount())
+	}
+}
+
+// failedVideoPublisher 模拟发送失败并记录调用次数。
+type failedVideoPublisher struct{ calls int }
+
+// PublishVideoPublished 返回模拟发送错误，验证已提交视频不会被回滚。
+func (p *failedVideoPublisher) PublishVideoPublished(context.Context, *applicationvideo.PublishedEvent) error {
+	p.calls++
+	return errors.New("broker unavailable")
+}
+
+// TestPublisherFailureAndConcurrentIdempotency 验证发送失败不影响发布结果、重放不再发送、并发同键仅创建一个事件。
+func TestPublisherFailureAndConcurrentIdempotency(t *testing.T) {
+	failed := &failedVideoPublisher{}
+	service := applicationvideo.NewService(newMemoryVideoRepo(), applicationvideo.WithPublishedEventPublisher(failed))
+	for i := 0; i < 2; i++ {
+		result, err := service.CreatePublished(context.Background(), 42, "title", "description", "media", "cover", "same")
+		if err != nil || result.Created != (i == 0) {
+			t.Fatalf("result=%+v err=%v", result, err)
+		}
+	}
+	if failed.calls != 1 {
+		t.Fatalf("calls=%d", failed.calls)
+	}
+	publisher := &memoryVideoPublisher{}
+	service = applicationvideo.NewService(newMemoryVideoRepo(), applicationvideo.WithPublishedEventPublisher(publisher))
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := service.CreatePublished(context.Background(), 42, "title", "description", "media", "cover", "concurrent"); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if publisher.EventCount() != 1 {
+		t.Fatalf("events=%d", publisher.EventCount())
+	}
+}

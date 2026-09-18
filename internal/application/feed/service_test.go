@@ -19,6 +19,7 @@ type serviceTestRepository struct {
 	err        error
 }
 
+// ListTimelinePage 返回测试时间线分页结果。
 func (r *serviceTestRepository) ListTimelinePage(_ context.Context, c *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, error) {
 	r.listLimit = limit
 	r.listCursor = c
@@ -31,9 +32,13 @@ func (r *serviceTestRepository) ListTimelinePage(_ context.Context, c *domainfee
 	}
 	return out, r.err
 }
+
+// ListHotPage 返回测试热榜分页结果。
 func (r *serviceTestRepository) ListHotPage(_ context.Context, _ *domainfeed.HotCursor, limit int) ([]*domainfeed.FeedPageItem, error) {
 	return nil, r.err
 }
+
+// BatchGetFeedCards 返回指定视频的卡片数据，供测试组装或预热。
 func (r *serviceTestRepository) BatchGetFeedCards(_ context.Context, ids []int64) (map[int64]*domainfeed.FeedCard, error) {
 	m := map[int64]*domainfeed.FeedCard{}
 	for _, id := range ids {
@@ -41,6 +46,8 @@ func (r *serviceTestRepository) BatchGetFeedCards(_ context.Context, ids []int64
 	}
 	return m, nil
 }
+
+// BatchGetFeedStats 返回指定视频的互动统计，供测试组装或预热。
 func (r *serviceTestRepository) BatchGetFeedStats(_ context.Context, ids []int64) (map[int64]*domainfeed.FeedStat, error) {
 	return map[int64]*domainfeed.FeedStat{}, nil
 }
@@ -206,4 +213,14 @@ var _ domainfeed.Repository = (*serviceTestRepository)(nil)
 // ListFollowingPage 复用测试时间线结果，满足关注流仓储接口。
 func (r *serviceTestRepository) ListFollowingPage(ctx context.Context, _ int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, error) {
 	return r.ListTimelinePage(ctx, cursor, limit)
+}
+
+// ListFollowingPullAuthorIDs 返回空作者列表，供非索引测试满足仓储接口。
+func (r *serviceTestRepository) ListFollowingPullAuthorIDs(context.Context, int64) ([]int64, error) {
+	return nil, nil
+}
+
+// ListFollowingAuthorIDs 返回空作者列表，供非索引测试满足仓储接口。
+func (r *serviceTestRepository) ListFollowingAuthorIDs(context.Context, int64) ([]int64, error) {
+	return nil, nil
 }

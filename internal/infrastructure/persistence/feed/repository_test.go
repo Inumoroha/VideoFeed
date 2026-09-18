@@ -16,7 +16,7 @@ import (
 func TestListTimelinePage(t *testing.T) {
 	r, m := mockRepo(t)
 	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	m.ExpectQuery(regexp.QuoteMeta(`SELECT v.id AS video_id, v.published_at FROM videos AS v WHERE v.status = $1 AND v.published_at IS NOT NULL ORDER BY v.published_at DESC,v.id DESC LIMIT $2`)).WithArgs(2, 2).WillReturnRows(sqlmock.NewRows([]string{"video_id", "published_at"}).AddRow(7, at))
+	m.ExpectQuery(regexp.QuoteMeta(`SELECT v.id AS video_id, v.author_id, v.published_at FROM videos AS v WHERE v.status = $1 AND v.published_at IS NOT NULL ORDER BY v.published_at DESC,v.id DESC LIMIT $2`)).WithArgs(2, 2).WillReturnRows(sqlmock.NewRows([]string{"video_id", "published_at"}).AddRow(7, at))
 	got, err := r.ListTimelinePage(context.Background(), nil, 2)
 	if err != nil || len(got) != 1 || got[0].VideoID != 7 {
 		t.Fatalf("got=%v err=%v", got, err)

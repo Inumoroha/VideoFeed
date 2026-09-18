@@ -45,16 +45,17 @@ type feedItemAPIResponse struct {
 
 // memoryFeedRepo 以互斥锁保护测试视频、关注关系和收件箱状态。
 type memoryFeedRepo struct {
-	mu             sync.Mutex
-	items          []*domainfeed.FeedItem
-	timelineCalls  int
-	hotCalls       int
-	cardCalls      int
-	statCalls      int
-	following      map[int64]map[int64]struct{}
-	followerCounts map[int64]int
-	inbox          map[int64]map[int64]struct{}
-	followingCalls int
+	mu                       sync.Mutex
+	items                    []*domainfeed.FeedItem
+	timelineCalls            int
+	hotCalls                 int
+	cardCalls                int
+	statCalls                int
+	following                map[int64]map[int64]struct{}
+	followerCounts           map[int64]int
+	inbox                    map[int64]map[int64]struct{}
+	followingCalls           int
+	followingPullAuthorCalls int
 }
 
 // newMemoryFeedRepo 初始化测试视频、关注关系、粉丝数和收件箱。
@@ -158,21 +159,18 @@ func (r *memoryFeedRepo) ListHotPage(ctx context.Context, cursor *domainfeed.Hot
 	return items[:limit], nil
 }
 
-// ListFollowingPage 加锁合并有效关注作者的收件箱和大作者视频，并去重分页。
+// ListFollowingPage 加锁读取有效关注作者的全部视频，并去重分页。
 func (r *memoryFeedRepo) ListFollowingPage(ctx context.Context, viewerID int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.followingCalls++
 
 	followedAuthors := r.following[viewerID]
-	inboxVideos := r.inbox[viewerID]
 	seen := map[int64]struct{}{}
 	items := make([]*domainfeed.FeedPageItem, 0, len(r.items))
 	for _, item := range r.items {
 		_, followed := followedAuthors[item.AuthorID]
-		_, pushed := inboxVideos[item.VideoID]
-		pulled := followed && r.followerCounts[item.AuthorID] >= domainfeed.BigCreatorFollowerThreshold
-		if (!pushed && !pulled) || !followed {
+		if !followed {
 			continue
 		}
 		if cursor == nil || item.PublishedAt.Before(cursor.PublishedAt) || (item.PublishedAt.Equal(cursor.PublishedAt) && item.VideoID < cursor.VideoID) {
@@ -228,7 +226,7 @@ func (r *memoryFeedRepo) BatchGetFeedStats(ctx context.Context, videoIDs []int64
 	return stats, nil
 }
 
-// TestFollowingFeedScene 验证推拉混合、粉丝阈值、未关注过滤和两页游标结果。
+// TestFollowingFeedScene 验证数据库回退读取、未关注过滤和两页游标结果。
 func TestFollowingFeedScene(t *testing.T) {
 	repo := newMemoryFeedRepo(seedFollowingFeedItems())
 	repo.FollowForTest(42, 100)
@@ -354,7 +352,7 @@ func TestFollowingAuthenticationAndQuery(t *testing.T) {
 	requireStatus(t, performJSONRequest(failingRouter, http.MethodGet, "/api/feed-items?scene=following", "", token), http.StatusInternalServerError)
 }
 
-// TestFollowingDeduplicationAndUnfollow 验证推拉重叠去重、同时间排序、普通作者未推送排除及取关过滤。
+// TestFollowingDeduplicationAndUnfollow 验证重复条目去重、同时间排序、普通作者冷启动回源及取关过滤。
 func TestFollowingDeduplicationAndUnfollow(t *testing.T) {
 	items := seedFollowingFeedItems()
 	items[0].PublishedAt = items[3].PublishedAt
@@ -377,7 +375,7 @@ func TestFollowingDeduplicationAndUnfollow(t *testing.T) {
 	requireStatus(t, w, http.StatusOK)
 	var second feedAPIResponse
 	decodeJSON(t, w, &second)
-	if len(second.Items) != 1 || second.Items[0].VideoID != 1 || second.HasMore {
+	if len(second.Items) != 1 || second.Items[0].VideoID != 1 || !second.HasMore {
 		t.Fatalf("%+v", second)
 	}
 	repo.mu.Lock()
@@ -386,7 +384,7 @@ func TestFollowingDeduplicationAndUnfollow(t *testing.T) {
 	w = performJSONRequest(router, http.MethodGet, "/api/feed-items?scene=following", "", token)
 	requireStatus(t, w, http.StatusOK)
 	decodeJSON(t, w, &second)
-	if len(second.Items) != 0 {
+	if len(second.Items) != 1 || second.Items[0].VideoID != 2 {
 		t.Fatalf("unfollowed entries leaked: %+v", second)
 	}
 }
@@ -406,6 +404,7 @@ func seedFollowingFeedItems() []*domainfeed.FeedItem {
 func feedPageItemFromFeedItem(item *domainfeed.FeedItem) *domainfeed.FeedPageItem {
 	return &domainfeed.FeedPageItem{
 		VideoID:     item.VideoID,
+		AuthorID:    item.AuthorID,
 		PublishedAt: item.PublishedAt,
 		HotScore:    item.HotScore,
 	}
@@ -509,4 +508,42 @@ func feedStatFromFeedItem(item *domainfeed.FeedItem) *domainfeed.FeedStat {
 // newFeedRouter 以测试视频创建信息流服务和路由。
 func newFeedRouter(items []*domainfeed.FeedItem) *gin.Engine {
 	return newFeedRouterWithService(applicationfeed.New(newMemoryFeedRepo(items)))
+}
+
+// ListFollowingPullAuthorIDs 查询当前用户关注的大作者编号。
+func (r *memoryFeedRepo) ListFollowingPullAuthorIDs(ctx context.Context, viewerID int64) ([]int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.followingPullAuthorCalls++
+
+	authors := make([]int64, 0, len(r.following[viewerID]))
+	for authorID := range r.following[viewerID] {
+		if r.followerCounts[authorID] < domainfeed.BigCreatorFollowerThreshold {
+			continue
+		}
+		authors = append(authors, authorID)
+	}
+	sort.Slice(authors, func(i, j int) bool {
+		return authors[i] < authors[j]
+	})
+	return authors, nil
+}
+
+// FollowingPullAuthorCalls 加锁读取索引作者查询次数。
+func (r *memoryFeedRepo) FollowingPullAuthorCalls() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.followingPullAuthorCalls
+}
+
+// ListFollowingAuthorIDs 返回所有有效关注作者，并记录索引读取的作者查询次数。
+func (r *memoryFeedRepo) ListFollowingAuthorIDs(_ context.Context, viewerID int64) ([]int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.followingPullAuthorCalls++
+	ids := []int64{}
+	for id := range r.following[viewerID] {
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
