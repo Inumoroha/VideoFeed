@@ -61,10 +61,11 @@ type HotStrategy struct {
 	group        singleflight.Group
 }
 
-// FollowingStrategy 使用推拉混合模式读取关注流，仅缓存公共卡片和计数。
+// FollowingStrategy 使用推拉混合索引读取关注流，并共用公共卡片和计数缓存。
 type FollowingStrategy struct {
-	repo  domainfeed.Repository
-	cache FeedCache
+	followingIndex FollowingIndexCache
+	repo           domainfeed.Repository
+	cache          FeedCache
 }
 
 // hotCursorPayload 表示热榜游标的编码载荷。
@@ -93,4 +94,14 @@ type FeedPage struct {
 	Items      []*domainfeed.FeedPageItem
 	NextCursor string
 	HasMore    bool
+}
+
+// FollowingIndexCache 合并当前关注作者的收件箱和作者发件箱索引。
+type FollowingIndexCache interface {
+	ListFollowingIndexPage(context.Context, int64, []int64, *domainfeed.TimelineCursor, int) ([]*domainfeed.FeedPageItem, bool, error)
+}
+
+// FollowingIndexValidator 校验索引条目仍然公开且属于当前关注作者。
+type FollowingIndexValidator interface {
+	ValidateFollowingIndex(context.Context, int64, []*domainfeed.FeedPageItem) (bool, error)
 }

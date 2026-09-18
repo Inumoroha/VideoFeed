@@ -10,13 +10,19 @@ import (
 
 const MaxListLimit = 100
 
+// Service 保存视频仓储和可选发布事件发送器。
 type Service struct {
-	repo domainvideo.Repository
+	repo      domainvideo.Repository
+	publisher PublishedEventPublisher
 }
 
-// NewService 创建使用指定视频仓储的应用服务。
-func NewService(repo domainvideo.Repository) *Service {
-	return &Service{repo: repo}
+// NewService 创建使用指定视频仓储和可选发布器的应用服务。
+func NewService(repo domainvideo.Repository, options ...Option) *Service {
+	service := &Service{repo: repo}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 // CreatePublished 校验发布参数，按幂等键复用已有视频或创建新视频。
@@ -57,6 +63,7 @@ func (s *Service) CreatePublished(ctx context.Context, authorID int64, title, de
 		return nil, ErrSaveVideoFailed
 	}
 
+	s.publishCreatedVideo(ctx, video)
 	return &CreateResult{Video: video, Created: true}, nil
 }
 
@@ -148,4 +155,31 @@ func (s *Service) Delete(ctx context.Context, authorID, videoID int64) error {
 // ready 判断服务及其视频仓储依赖是否已初始化。
 func (s *Service) ready() bool {
 	return s != nil && s.repo != nil
+}
+
+// PublishedEventPublisher 定义视频发布事件发送能力。
+type PublishedEventPublisher interface {
+	PublishVideoPublished(context.Context, *PublishedEvent) error
+}
+
+// Option 配置视频服务的可选依赖。
+type Option func(*Service)
+
+// WithPublishedEventPublisher 注入视频创建后的发布事件发送器。
+func WithPublishedEventPublisher(publisher PublishedEventPublisher) Option {
+	return func(s *Service) {
+		s.publisher = publisher
+	}
+}
+
+// publishCreatedVideo 发送新建视频事件；发送失败不回滚已完成的视频事务。
+func (s *Service) publishCreatedVideo(ctx context.Context, video *domainvideo.Video) {
+	if s.publisher == nil {
+		return
+	}
+	event := NewPublishedEvent(video)
+	if event == nil {
+		return
+	}
+	_ = s.publisher.PublishVideoPublished(ctx, event)
 }

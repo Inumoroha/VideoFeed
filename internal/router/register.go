@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"log"
 	"path/filepath"
 
 	"github.com/gin-gonic/gin"
@@ -76,8 +77,7 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	userService := applicationuser.NewService(userRepository, jwtManager)
 	userHandler := userhandler.NewHandler(userService)
 	videoRepository := videopersistence.New(gormDB)
-	videoService := applicationvideo.NewService(videoRepository)
-	videoHandler := videohandler.NewHandler(videoService)
+	videoOptions := []applicationvideo.Option{}
 	feedRepository := feedpersistence.New(gormDB)
 	feedOptions := []applicationfeed.Option{}
 	var feedCache *feedcache.FeedCache
@@ -92,13 +92,27 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	interactionOptions := []func(*applicationinteraction.Service){}
 	if feedCache != nil {
 		interactionOptions = append(interactionOptions, applicationinteraction.WithHotScoreCache(feedCache))
-		if cfg.RabbitMQ.URL != "" {
-			if broker, e := inframq.NewRabbitMQ(cfg.RabbitMQ); e == nil {
+	}
+	if cfg.RabbitMQ.URL != "" {
+		broker, err := inframq.NewRabbitMQ(cfg.RabbitMQ)
+		if err != nil {
+			log.Printf("rabbitmq disabled: %v", err)
+		} else {
+			videoOptions = append(videoOptions, applicationvideo.WithPublishedEventPublisher(broker))
+			if feedCache != nil {
 				interactionOptions = append(interactionOptions, applicationinteraction.WithAsyncActionPipeline(feedCache, broker))
-				_ = applicationinteraction.NewActionWorker(interactionRepository, broker).Start(context.Background())
+				if err := applicationinteraction.NewActionWorker(interactionRepository, broker).Start(context.Background()); err != nil {
+					log.Printf("interaction worker disabled: %v", err)
+				}
+				preheater := applicationvideo.NewFeedPreheater(feedRepository, feedCache)
+				if err := applicationvideo.NewFanoutWorker(feedRepository, broker, feedCache, preheater).Start(context.Background()); err != nil {
+					log.Printf("video fanout worker disabled: %v", err)
+				}
 			}
 		}
 	}
+	videoService := applicationvideo.NewService(videoRepository, videoOptions...)
+	videoHandler := videohandler.NewHandler(videoService)
 	interactionService := applicationinteraction.NewService(interactionRepository, interactionOptions...)
 	interactionHandler := interactionhandler.NewHandler(interactionService)
 	relationRepository := relationpersistence.New(gormDB)

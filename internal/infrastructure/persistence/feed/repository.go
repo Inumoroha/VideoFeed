@@ -120,7 +120,7 @@ func (r *Repository) ListHotPage(ctx context.Context, cursor *domainfeed.HotCurs
 	return feedPageItemsFromModels(models), nil
 }
 
-// ListFollowingPage 使用推拉混合模式读取关注流：普通作者读 inbox，大 V 作者按关注关系拉取。
+// ListFollowingPage 按有效关注关系读取公开视频，供 Redis 索引缺失时回退。
 func (r *Repository) ListFollowingPage(ctx context.Context, viewerID int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("feed repository is not initialized")
@@ -141,50 +141,78 @@ func (r *Repository) ListFollowingPage(ctx context.Context, viewerID int64, curs
 		ctx = context.Background()
 	}
 	var models []domainfeed.FeedPageItem
-	query := `
-SELECT merged.video_id, merged.published_at
-FROM (
-	SELECT v.id AS video_id, v.published_at AS published_at
-	FROM feed_inbox AS fi
-	JOIN videos AS v ON v.id = fi.video_id
-	JOIN user_follow AS f ON f.user_id = fi.user_id AND f.target_user_id = v.author_id
-	WHERE fi.user_id = ? AND f.status = ? AND v.status = ? AND v.published_at IS NOT NULL
-	UNION
-	SELECT v.id AS video_id, v.published_at AS published_at
-	FROM videos AS v
-	JOIN user_follow AS f ON f.target_user_id = v.author_id
-	JOIN user_relation_stat AS rs ON rs.user_id = v.author_id
-	WHERE f.user_id = ? AND f.status = ? AND rs.follower_count >= ? AND v.status = ? AND v.published_at IS NOT NULL
-) AS merged`
-	args := []any{
-		viewerID,
-		domainrelation.FollowStatusActive,
-		domainvideo.StatusPublished,
-		viewerID,
-		domainrelation.FollowStatusActive,
-		domainfeed.BigCreatorFollowerThreshold,
-		domainvideo.StatusPublished,
-	}
+	query := r.db.WithContext(ctx).
+		Table("videos AS v").
+		Select("v.id AS video_id, v.author_id, v.published_at").
+		Joins("JOIN user_follow AS f ON f.target_user_id = v.author_id").
+		Where("f.user_id = ? AND f.status = ? AND v.status = ? AND v.published_at IS NOT NULL", viewerID, domainrelation.FollowStatusActive, domainvideo.StatusPublished)
 
 	if cursor != nil {
-		query += `
-WHERE (merged.published_at < ? OR (merged.published_at = ? AND merged.video_id < ?))`
-		args = append(args, cursor.PublishedAt, cursor.PublishedAt, cursor.VideoID)
+		query = query.Where(
+			"(v.published_at < ? OR (v.published_at = ? AND v.id < ?))",
+			cursor.PublishedAt,
+			cursor.PublishedAt,
+			cursor.VideoID,
+		)
 	}
 
-	query += `
-ORDER BY merged.published_at DESC, merged.video_id DESC
-LIMIT ?`
-	args = append(args, limit)
-
-	err := r.db.WithContext(ctx).
-		Raw(query, args...).
+	err := query.
+		Order("v.published_at DESC").
+		Order("v.id DESC").
+		Limit(limit).
 		Scan(&models).
 		Error
 	if err != nil {
 		return nil, err
 	}
 	return feedPageItemsFromModels(models), nil
+}
+
+// ListFollowingPullAuthorIDs 查询当前用户关注的大作者编号。
+func (r *Repository) ListFollowingPullAuthorIDs(ctx context.Context, viewerID int64) ([]int64, error) {
+	var authorIDs []int64
+	err := r.db.WithContext(ctx).
+		Table("user_follow AS f").
+		Select("f.target_user_id").
+		Joins("JOIN user_relation_stat AS rs ON rs.user_id = f.target_user_id").
+		Where("f.user_id = ? AND f.status = ? AND rs.follower_count >= ?", viewerID, domainrelation.FollowStatusActive, domainfeed.BigCreatorFollowerThreshold).
+		Order("f.target_user_id ASC").
+		Scan(&authorIDs).
+		Error
+	return authorIDs, err
+}
+
+// CountFollowers 读取作者粉丝数，缺失统计时按零处理。
+func (r *Repository) CountFollowers(ctx context.Context, authorID int64) (int, error) {
+	var stat struct{ FollowerCount int }
+	err := r.db.WithContext(ctx).
+		Table("user_relation_stat").
+		Select("follower_count").
+		Where("user_id = ?", authorID).
+		Take(&stat).
+		Error
+	if err == gorm.ErrRecordNotFound {
+		return 0, nil
+	}
+	return stat.FollowerCount, err
+}
+
+// ListFollowerIDs 按用户编号升序分页读取作者的有效粉丝。
+func (r *Repository) ListFollowerIDs(ctx context.Context, authorID int64, cursor int64, limit int) ([]int64, error) {
+	var followerIDs []int64
+	query := r.db.WithContext(ctx).
+		Table("user_follow").
+		Select("user_id").
+		Where("target_user_id = ? AND status = ?", authorID, domainrelation.FollowStatusActive)
+	if cursor > 0 {
+		query = query.Where("user_id > ?", cursor)
+	}
+	err := query.
+		Order("user_id ASC").
+		Limit(limit).
+		Scan(&followerIDs).
+		Error
+	return followerIDs, err
 }
 
 // BatchGetFeedCards 关联 users 表批量读取视频和作者展示字段，供缓存缺失时回源。
@@ -243,17 +271,19 @@ func (r *Repository) BatchGetFeedStats(ctx context.Context, videoIDs []int64) (m
 	return stats, nil
 }
 
+// basePageQuery 创建携带作者编号的公开视频分页查询。
 func (r *Repository) basePageQuery(ctx context.Context) *gorm.DB {
 	return r.db.WithContext(ctx).
 		Table("videos AS v").
-		Select("v.id AS video_id, v.published_at").
+		Select("v.id AS video_id, v.author_id, v.published_at").
 		Where("v.status = ? AND v.published_at IS NOT NULL", domainvideo.StatusPublished)
 }
 
+// baseHotPageQuery 创建携带作者编号和互动热度的公开视频查询。
 func (r *Repository) baseHotPageQuery(ctx context.Context) *gorm.DB {
 	return r.db.WithContext(ctx).
 		Table("videos AS v").
-		Select("v.id AS video_id, ("+hotScoreExpression+") AS hot_score, v.published_at").
+		Select("v.id AS video_id, v.author_id, ("+hotScoreExpression+") AS hot_score, v.published_at").
 		Joins("LEFT JOIN video_stat AS vs ON vs.video_id = v.id").
 		Where("v.status = ? AND v.published_at IS NOT NULL", domainvideo.StatusPublished)
 }
@@ -265,4 +295,27 @@ func feedPageItemsFromModels(models []domainfeed.FeedPageItem) []*domainfeed.Fee
 		items = append(items, &models[index])
 	}
 	return items
+}
+
+// ListFollowingAuthorIDs 查询全部有效关注作者，用于过滤已取关的缓存条目。
+func (r *Repository) ListFollowingAuthorIDs(ctx context.Context, viewerID int64) ([]int64, error) {
+	var ids []int64
+	err := r.db.WithContext(ctx).Table("user_follow").Select("target_user_id").Where("user_id = ? AND status = ?", viewerID, domainrelation.FollowStatusActive).Order("target_user_id ASC").Scan(&ids).Error
+	return ids, err
+}
+
+// ValidateFollowingIndex 批量核对索引视频的发布状态和有效关注关系，避免预热卡片泄漏已删除视频。
+func (r *Repository) ValidateFollowingIndex(ctx context.Context, viewerID int64, items []*domainfeed.FeedPageItem) (bool, error) {
+	ids := make([]int64, 0, len(items))
+	for _, item := range items {
+		if item != nil {
+			ids = append(ids, item.VideoID)
+		}
+	}
+	if len(ids) == 0 {
+		return true, nil
+	}
+	var count int64
+	err := r.db.WithContext(ctx).Table("videos AS v").Joins("JOIN user_follow AS f ON f.target_user_id = v.author_id").Where("v.id IN ? AND v.status = ? AND v.published_at IS NOT NULL AND f.user_id = ? AND f.status = ?", ids, domainvideo.StatusPublished, viewerID, domainrelation.FollowStatusActive).Count(&count).Error
+	return count == int64(len(items)), err
 }

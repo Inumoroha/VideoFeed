@@ -51,6 +51,7 @@ func WithFeedCache(cache FeedCache) Option {
 				typed.cache = cache
 			case *FollowingStrategy:
 				typed.cache = cache
+				typed.followingIndex, _ = cache.(FollowingIndexCache)
 			}
 		}
 	}
@@ -269,7 +270,7 @@ func (s *FollowingStrategy) List(ctx context.Context, req FeedRequest) (*FeedRes
 
 // listPageFromRepo 多查一条关注流记录判断后续页，并为非空页面生成时间线游标。
 func (s *FollowingStrategy) listPageFromRepo(ctx context.Context, viewerID int64, parsedCursor *domainfeed.TimelineCursor, limit int) (*FeedPage, error) {
-	items, err := s.repo.ListFollowingPage(ctx, viewerID, parsedCursor, limit+1)
+	items, err := s.listFollowingItems(ctx, viewerID, parsedCursor, limit+1)
 	if err != nil {
 		return nil, ErrLoadFeedFailed
 	}
@@ -698,4 +699,28 @@ func encodeHotCursor(cursor *domainfeed.HotCursor) string {
 		return ""
 	}
 	return base64.RawURLEncoding.EncodeToString(content)
+}
+
+// listFollowingItems 优先读取关注索引并核对可见性；索引缺失、不足、失效或故障时回源数据库。
+func (s *FollowingStrategy) listFollowingItems(ctx context.Context, viewerID int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, error) {
+	if s.followingIndex != nil {
+		authors, err := s.repo.ListFollowingAuthorIDs(ctx, viewerID)
+		if err != nil {
+			return nil, err
+		}
+		items, ok, err := s.followingIndex.ListFollowingIndexPage(ctx, viewerID, authors, cursor, limit)
+		if err == nil && ok && len(items) >= limit {
+			if validator, supported := s.repo.(FollowingIndexValidator); supported {
+				valid, err := validator.ValidateFollowingIndex(ctx, viewerID, items)
+				if err != nil {
+					return nil, err
+				}
+				if !valid {
+					return s.repo.ListFollowingPage(ctx, viewerID, cursor, limit)
+				}
+			}
+			return items, nil
+		}
+	}
+	return s.repo.ListFollowingPage(ctx, viewerID, cursor, limit)
 }
