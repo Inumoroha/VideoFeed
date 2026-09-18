@@ -145,3 +145,8 @@ func newFeedTestContext(method, target, body string, recorder *httptest.Response
 }
 
 var _ domainfeed.Repository = (*handlerTestRepository)(nil)
+
+// ListFollowingPage 复用测试时间线结果，满足关注流仓储接口。
+func (r *handlerTestRepository) ListFollowingPage(ctx context.Context, _ int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, error) {
+	return r.ListTimelinePage(ctx, cursor, limit)
+}

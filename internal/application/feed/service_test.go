@@ -202,3 +202,8 @@ func makeFeedItems(count int) []*domainfeed.FeedItem {
 }
 
 var _ domainfeed.Repository = (*serviceTestRepository)(nil)
+
+// ListFollowingPage 复用测试时间线结果，满足关注流仓储接口。
+func (r *serviceTestRepository) ListFollowingPage(ctx context.Context, _ int64, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedPageItem, error) {
+	return r.ListTimelinePage(ctx, cursor, limit)
+}
