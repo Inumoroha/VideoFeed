@@ -384,21 +384,36 @@ paths:
     get:
       tags:
         - Feed
-      summary: Get the chronological video feed
+      summary: 获取时间线、热榜或关注流
       operationId: getTimelineFeed
-      security: []
+      description: >-
+        scene 默认 timeline，支持 timeline、hot、following，参数会去除首尾空白并转为小写。
+        following 必须提供有效的 Bearer 访问令牌；未提供或无效令牌按匿名处理并返回 401。
+        其他场景可匿名访问。关注流按发布时间和视频 ID 倒序排列，合并收件箱与大作者拉取结果。
+      security:
+        - {}
+        - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/FeedScene'
         - $ref: '#/components/parameters/FeedLimit'
         - $ref: '#/components/parameters/FeedCursor'
       responses:
         '200':
-          description: Chronological feed page
+          description: 信息流分页结果
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/FeedResponse'
         '400':
-          $ref: '#/components/responses/InvalidRequest'
+          $ref: '#/components/responses/InvalidFeedRequest'
+        '401':
+          description: 关注流缺少有效登录身份
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: viewer is required
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/feed/query:
@@ -407,13 +422,22 @@ paths:
         - Feed
       summary: Query a feed scene with contextual parameters
       operationId: queryFeed
-      security: []
+      description: >-
+        scene 默认 timeline，支持 timeline、hot、following，参数会去除首尾空白并转为小写。
+        following 必须提供有效的 Bearer 访问令牌；未提供或无效令牌按匿名处理并返回 401。
+        其他场景可匿名访问。关注流按发布时间和视频 ID 倒序排列，合并收件箱与大作者拉取结果。
+      security:
+        - {}
+        - bearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/FeedQueryRequest'
+            example:
+              scene: following
+              limit: 10
       responses:
         '200':
           description: Feed page
@@ -422,7 +446,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/FeedResponse'
         '400':
-          $ref: '#/components/responses/InvalidRequest'
+          $ref: '#/components/responses/InvalidFeedRequest'
+        '401':
+          description: 关注流缺少有效登录身份
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: viewer is required
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/videos/{videoId}/like:
@@ -714,6 +746,15 @@ components:
         minimum: 0
         default: 0
 
+    FeedScene:
+      name: scene
+      in: query
+      required: false
+      schema:
+        type: string
+        default: timeline
+      description: 支持 timeline、hot、following；空值使用 timeline；忽略大小写及首尾空白，其他值返回 400；following 要求有效访问令牌。
+      example: following
     FeedLimit:
       name: limit
       in: query
@@ -721,7 +762,7 @@ components:
       schema:
         type: integer
         minimum: 1
-        default: 20
+        default: 10
       description: Number of feed items to return; values above 100 are capped at 100.
     FeedCursor:
       name: cursor
@@ -729,7 +770,7 @@ components:
       required: false
       schema:
         type: string
-      description: URL-safe Base64 cursor returned by the previous feed page. It contains the last item's publication time and video ID; invalid cursors return 400.
+      description: URL-safe Base64 cursor returned by the previous feed page. Timeline and following cursors contain publication time and video ID; hot cursors depend on the active ranking strategy. Invalid cursors return 400.
 
   securitySchemes:
     bearerAuth:
@@ -1011,19 +1052,18 @@ components:
       properties:
         scene:
           type: string
-          description: Feed scene; omitted value uses the default timeline scene.
-          enum: [timeline, recommend, following, hot]
+          description: 支持 timeline、hot、following；省略或空值使用 timeline，忽略大小写及首尾空白；following 要求有效访问令牌。
         cursor:
           type: string
         limit:
           type: integer
           minimum: 1
-          maximum: 100
+          description: 大于 100 时截断为 100；省略时默认 10。
+          default: 10
         context:
           type: object
           additionalProperties:
             type: string
-      additionalProperties: false
     FeedResponse:
       type: object
       required:
@@ -1041,10 +1081,11 @@ components:
             $ref: '#/components/schemas/FeedItemResponse'
         next_cursor:
           type: string
-          description: URL-safe Base64 cursor for the next page; it is empty when there is no next page.
+          description: URL 安全的 Base64 游标；关注流非空页始终返回游标，包括最后一页。是否继续应以 has_more 为准。
         has_more:
           type: boolean
       example:
+        scene: following
         items: []
         next_cursor: ""
         has_more: false
@@ -1248,6 +1289,14 @@ components:
         error:
           type: string
   responses:
+    InvalidFeedRequest:
+      description: 分页数量、游标、场景或 JSON 请求体无效
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: cursor is invalid
     InvalidRequest:
       description: Invalid request body or input fields
       content:
