@@ -90,3 +90,11 @@ feed:timeline:v1:limit:{limit}:cursor:{sha1(cursor)}
 启动时 `internal/router/register.go` 通过 AutoMigrate 创建 `feed_inbox` 表及索引，无新增配置、环境变量、服务或依赖。开发配置在 `configs/config.yaml`，容器配置在 `configs/config.docker.yaml`；沿用根目录 `docker-compose.yaml` 的 PostgreSQL 数据卷和健康依赖。
 
 在仓库根目录运行 `go test ./...`、`go vet ./...` 和 `docker compose config --quiet`。使用 `docker compose up -d --build` 启动后，API 端口为 9000，Web 端口为 5173，宿主 PostgreSQL 端口为 5433。迁移明细和验证边界见 [迁移审计](../migration-1517e5a.md)。
+
+## 6. 前端关注流入口
+
+打开 `/following` 或点击侧栏“关注流”进入。前端 `web/src/App.jsx` 在没有访问令牌时直接显示“登录后查看关注流”，不请求 Feed 接口；有令牌时调用 `GET /api/feed-items?scene=following&limit=10`。关注流请求返回 401 时同样显示登录提示，其他错误保留重新加载操作。登录按钮进入 `/auth`，登录成功仍按现有流程进入时间线。
+
+桌面导航按“最新视频、关注流、热门榜单”排列；900px 及以下宽度使用三等分底栏，样式位于 `web/src/style.css`。现有 Vite 和 Nginx 的单页回退支持直接访问 `/following`，不新增服务端路由。页面切换或令牌变化时，旧 Feed 请求的返回结果不会再更新状态。
+
+前端构建命令为 `cd web` 后运行 `npm run build`；开发服务默认端口为 5173。迁移映射和验证结果见 [前端入口迁移审计](../migration-7d58cd0.md)。

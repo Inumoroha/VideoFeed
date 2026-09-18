@@ -19,6 +19,7 @@
 - ✅ Feed scene 策略注册表
 - ✅ Feed 查询入口：`POST /api/feed/query`
 - ✅ 关注流推拉混合：`scene=following`，需要有效访问令牌；普通作者发布时推送，大作者查询时拉取，详见 [Feed 模块](docs/modules/feed.md) 和 [迁移审计](docs/migration-1517e5a.md)
+- ✅ 前端关注流入口：`/following`，未登录时显示登录提示，移动端底部导航支持三个场景。
 - ✅ 时间线 Feed Redis 读缓存与 singleflight 回源合并
 - ✅ 后端 API 测试
 - ✅ React + Vite Web 客户端
