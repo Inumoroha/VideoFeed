@@ -10,6 +10,8 @@ type Repository interface {
 	ListTimelinePage(ctx context.Context, cursor *TimelineCursor, limit int) ([]*FeedPageItem, error)
 	// ListHotPage 按热度分倒序读取轻量 Feed 页。
 	ListHotPage(ctx context.Context, cursor *HotCursor, limit int) ([]*FeedPageItem, error)
+	// ListFollowingPage 合并普通作者收件箱和大作者拉取结果，按时间和视频 ID 倒序分页。
+	ListFollowingPage(ctx context.Context, viewerID int64, cursor *TimelineCursor, limit int) ([]*FeedPageItem, error)
 	// BatchGetFeedCards 批量读取视频卡片展示字段。
 	BatchGetFeedCards(ctx context.Context, videoIDs []int64) (map[int64]*FeedCard, error)
 	// BatchGetFeedStats 批量读取视频互动计数。

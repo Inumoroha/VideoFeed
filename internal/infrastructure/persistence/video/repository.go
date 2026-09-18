@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
+	domainrelation "github.com/inumoroha/video-feed/internal/domain/relation"
 	domainvideo "github.com/inumoroha/video-feed/internal/domain/video"
 	"gorm.io/gorm"
 )
@@ -53,7 +55,7 @@ func EnsureStats(db *gorm.DB) error {
 	return db.Exec(query).Error
 }
 
-// Save 在同一事务中创建视频记录和初始统计记录。
+// Save 在同一事务中创建视频、初始统计和普通作者的粉丝收件箱，任一步失败均回滚。
 func (r *Repository) Save(ctx context.Context, video *domainvideo.Video) error {
 	if r == nil || r.db == nil {
 		return errors.New("video repository is not initialized")
@@ -90,7 +92,10 @@ func (r *Repository) Save(ctx context.Context, video *domainvideo.Video) error {
 			CommentCount:  video.CommentCount,
 			FavoriteCount: video.FavoriteCount,
 		}
-		return tx.Create(&stat).Error
+		if err := tx.Create(&stat).Error; err != nil {
+			return err
+		}
+		return fanoutPublishedVideoToFollowers(tx, model.AuthorID, model.ID, model.PublishedAt)
 	})
 	if err != nil {
 		return err
@@ -100,6 +105,48 @@ func (r *Repository) Save(ctx context.Context, video *domainvideo.Video) error {
 	video.CreatedAt = model.CreatedAt
 	video.UpdatedAt = model.UpdatedAt
 	return nil
+}
+
+// authorFollowerStat 承载作者粉丝数查询结果。
+type authorFollowerStat struct {
+	FollowerCount int
+}
+
+// fanoutPublishedVideoToFollowers 在调用方事务内向普通作者的有效粉丝写入收件箱，重复条目原子更新发布时间；大作者跳过推送。
+func fanoutPublishedVideoToFollowers(tx *gorm.DB, authorID int64, videoID int64, publishedAt *time.Time) error {
+	if publishedAt == nil {
+		return nil
+	}
+
+	followerCount, err := authorFollowerCount(tx, authorID)
+	if err != nil {
+		return err
+	}
+	if followerCount >= domainfeed.BigCreatorFollowerThreshold {
+		return nil
+	}
+
+	return tx.Exec(`
+		INSERT INTO feed_inbox (user_id, video_id, author_id, published_at, created_at)
+		SELECT f.user_id, ?, ?, ?, NOW()
+		FROM user_follow AS f
+		WHERE f.target_user_id = ? AND f.status = ?
+		ON CONFLICT (user_id, video_id) DO UPDATE SET published_at = EXCLUDED.published_at
+	`, videoID, authorID, *publishedAt, authorID, domainrelation.FollowStatusActive).Error
+}
+
+// authorFollowerCount 在当前事务内读取作者粉丝数，缺失统计按零处理，其他错误交由调用方回滚。
+func authorFollowerCount(tx *gorm.DB, authorID int64) (int, error) {
+	var stat authorFollowerStat
+	err := tx.Table("user_relation_stat").
+		Select("follower_count").
+		Where("user_id = ?", authorID).
+		Take(&stat).
+		Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, nil
+	}
+	return stat.FollowerCount, err
 }
 
 // FindByID 查询指定的已发布视频，并合并其互动统计数据。

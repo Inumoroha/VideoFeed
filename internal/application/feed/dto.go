@@ -61,6 +61,12 @@ type HotStrategy struct {
 	group        singleflight.Group
 }
 
+// FollowingStrategy 使用推拉混合模式读取关注流，仅缓存公共卡片和计数。
+type FollowingStrategy struct {
+	repo  domainfeed.Repository
+	cache FeedCache
+}
+
 // hotCursorPayload 表示热榜游标的编码载荷。
 type hotCursorPayload struct {
 	HotScore    int    `json:"hot_score"`

@@ -170,6 +170,10 @@ func feedItemsResponseFromResult(result *applicationfeed.FeedResult) feedItemsRe
 
 // writeFeedError 将信息流领域或应用错误转换为统一的 HTTP 错误响应。
 func writeFeedError(c *gin.Context, err error) {
+	if errors.Is(err, domainfeed.ErrViewerRequired) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
 	if isBadRequestError(err) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

@@ -7,6 +7,9 @@ import (
 
 const MaxLimit = 100
 
+// BigCreatorFollowerThreshold 定义大作者采用关注流拉模式的粉丝数阈值。
+const BigCreatorFollowerThreshold = 10000
+
 // Scene 表示不同 Feed 场景，应用层通过场景选择对应策略。
 type Scene string
 

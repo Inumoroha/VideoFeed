@@ -49,6 +49,8 @@ func WithFeedCache(cache FeedCache) Option {
 				typed.cache = cache
 			case *HotStrategy:
 				typed.cache = cache
+			case *FollowingStrategy:
+				typed.cache = cache
 			}
 		}
 	}
@@ -65,6 +67,7 @@ func NewService(repo domainfeed.Repository, options ...Option) *Service {
 	}
 	service.RegisterStrategy(NewTimelineStrategy(domainfeed.SceneTimeline, repo))
 	service.RegisterStrategy(NewHotStrategy(repo))
+	service.RegisterStrategy(NewFollowingStrategy(repo))
 	for _, option := range options {
 		option(service)
 	}
@@ -218,6 +221,78 @@ func encodeHotWindowCursor(cursor *domainfeed.HotCursor) string {
 		return ""
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// NewFollowingStrategy 创建关注流推拉混合策略。
+func NewFollowingStrategy(repo domainfeed.Repository) *FollowingStrategy {
+	return &FollowingStrategy{repo: repo}
+}
+
+// Scene 返回关注流场景。
+func (s *FollowingStrategy) Scene() domainfeed.Scene {
+	return domainfeed.SceneFollowing
+}
+
+// List 根据当前登录用户读取关注流。
+func (s *FollowingStrategy) List(ctx context.Context, req FeedRequest) (*FeedResult, error) {
+	if s == nil || s.repo == nil {
+		return nil, ErrFeedServiceNotInitialized
+	}
+	if req.ViewerID <= 0 {
+		return nil, domainfeed.ErrViewerRequired
+	}
+	if req.Limit < 0 {
+		return nil, domainfeed.ErrInvalidLimit
+	}
+	parsedCursor, err := parseTimelineCursor(req.Cursor)
+	if err != nil {
+		return nil, err
+	}
+	limit := normalizeLimit(req.Limit)
+
+	page, err := s.listPageFromRepo(ctx, req.ViewerID, parsedCursor, limit)
+	if err != nil {
+		return nil, err
+	}
+	items, err := assembleFeedItems(ctx, s.repo, s.cache, page.Items)
+	if err != nil {
+		return nil, ErrLoadFeedFailed
+	}
+
+	return &FeedResult{
+		Scene:      domainfeed.SceneFollowing,
+		Items:      items,
+		NextCursor: page.NextCursor,
+		HasMore:    page.HasMore,
+	}, nil
+}
+
+// listPageFromRepo 多查一条关注流记录判断后续页，并为非空页面生成时间线游标。
+func (s *FollowingStrategy) listPageFromRepo(ctx context.Context, viewerID int64, parsedCursor *domainfeed.TimelineCursor, limit int) (*FeedPage, error) {
+	items, err := s.repo.ListFollowingPage(ctx, viewerID, parsedCursor, limit+1)
+	if err != nil {
+		return nil, ErrLoadFeedFailed
+	}
+
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+
+	nextCursor := ""
+	if len(items) > 0 {
+		nextCursor = encodeTimelineCursor(&domainfeed.TimelineCursor{
+			PublishedAt: items[len(items)-1].PublishedAt,
+			VideoID:     items[len(items)-1].VideoID,
+		})
+	}
+
+	return &FeedPage{
+		Scene:      domainfeed.SceneFollowing,
+		Items:      items,
+		NextCursor: nextCursor,
+		HasMore:    hasMore,
+	}, nil
 }
 
 // RefreshFeed 从时间线起点查询视频流，适用于刷新首页数据。
