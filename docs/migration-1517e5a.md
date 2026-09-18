@@ -24,7 +24,7 @@
 ## 架构与边界
 
 - 当前按 handler/application/domain/infrastructure 分层，Go 模块为 github.com/inumoroha/video-feed。
-- 数据库为 PostgreSQL，视频表 videos、作者表 account、关系表 user_follow/user_relation_stat。普通作者的发布扇出与视频保存共用事务，失败整体回滚；唯一约束和原子冲突更新保持重复投递语义。
+- 数据库为 PostgreSQL，视频表 videos、作者表 users、关系表 user_follow/user_relation_stat。普通作者的发布扇出与视频保存共用事务，失败整体回滚；唯一约束和原子冲突更新保持重复投递语义。
 - 关注流按发布时间、视频 ID 双降序；普通作者只读发布时已推送的收件箱，大作者通过当前粉丝数和当前关注关系拉取。取关后旧收件箱条目不返回；推拉重叠由 UNION 去重。
 - 保留原提交边界：不回填关注前的普通作者视频，不补齐作者跨阈值后的历史 inbox；非空最后一页仍返回游标，以 has_more 判断是否继续。
 - 原提交没有 Redis 命令、WATCH/事务/Lua、RabbitMQ 连接/拓扑/确认/拒绝/重试/关闭、配置、环境变量、依赖或 Compose 文件变更。现有相关实现保持不变；关注流使用现有卡片和计数缓存的失败回源行为。
@@ -123,3 +123,7 @@
 - `internal/infrastructure/persistence/video/repository.go`
 - `internal/router/following_test.go`
 - `internal/router/register.go`
+
+## 真实联调复核修正
+
+后续真实 PostgreSQL 联调发现：卡片回源曾关联不存在的 account 表，导致有数据的关注流返回 500。此前静态审计误记了用户表名，也未捕获该问题。实际表名为 users；现已修复 BatchGetFeedCards 并添加先失败后通过的回归测试。本文件上方的表名已更正。原“未验证真实数据库”的记录反映迁移当时状态，后续真实数据库、账号和浏览器验证结果见 [联调报告](following-live-integration.md)。

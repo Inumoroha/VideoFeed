@@ -40,7 +40,7 @@ hot_score = like_count * 3 + comment_count * 5 + favorite_count * 4
 
 ## 3. 数据表设计（最小实现）
 
-Feed 依赖已有 `videos`、`account` 和 `video_stat` 表：`videos` 保存视频内容、作者 ID、发布状态和发布时间；`account` 提供作者昵称和头像；`video_stat` 提供互动计数。查询只返回已发布且 `published_at` 不为空的视频，关注流还使用 `feed_inbox`、`user_follow` 和 `user_relation_stat` 表。
+Feed 依赖已有 `videos`、`users` 和 `video_stat` 表：`videos` 保存视频内容、作者 ID、发布状态和发布时间；`users` 提供作者昵称和头像；`video_stat` 提供互动计数。查询只返回已发布且 `published_at` 不为空的视频，关注流还使用 `feed_inbox`、`user_follow` 和 `user_relation_stat` 表。
 
 ## 4. Timeline 访问优化
 
@@ -98,3 +98,5 @@ feed:timeline:v1:limit:{limit}:cursor:{sha1(cursor)}
 桌面导航按“最新视频、关注流、热门榜单”排列；900px 及以下宽度使用三等分底栏，样式位于 `web/src/style.css`。现有 Vite 和 Nginx 的单页回退支持直接访问 `/following`，不新增服务端路由。页面切换或令牌变化时，旧 Feed 请求的返回结果不会再更新状态。
 
 前端构建命令为 `cd web` 后运行 `npm run build`；开发服务默认端口为 5173。迁移映射和验证结果见 [前端入口迁移审计](../migration-7d58cd0.md)。
+
+真实账号、数据库和浏览器联调结果及修复说明见 [联调报告](../following-live-integration.md)。
