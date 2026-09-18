@@ -4,14 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	applicationvideo "github.com/inumoroha/video-feed/internal/application/video"
 	"strings"
+	"time"
 
 	applicationinteraction "github.com/inumoroha/video-feed/internal/application/interaction"
 	"github.com/inumoroha/video-feed/internal/config"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// RabbitMQ 封装互动事件的发布与消费通道。
+// RabbitMQ 封装互动和视频事件的发布与消费通道。
 type RabbitMQ struct {
 	conn    *amqp.Connection
 	publish *amqp.Channel
@@ -19,7 +21,7 @@ type RabbitMQ struct {
 	cfg     config.RabbitMQConfig
 }
 
-// NewRabbitMQ 连接 RabbitMQ 并声明互动事件交换机、队列及绑定。
+// NewRabbitMQ 连接 RabbitMQ 并声明互动和视频交换机、队列及绑定；初始化失败时关闭已创建资源。
 func NewRabbitMQ(cfg config.RabbitMQConfig) (*RabbitMQ, error) {
 	cfg = normalizeConfig(cfg)
 	if strings.TrimSpace(cfg.URL) == "" {
@@ -100,6 +102,7 @@ func (r *RabbitMQ) ConsumeActionChanged(ctx context.Context, handler func(contex
 	return nil
 }
 
+// ensureTopology 声明互动与视频持久化交换机和队列，并绑定各自路由键。
 func (r *RabbitMQ) ensureTopology() error {
 	if err := r.publish.ExchangeDeclare(r.cfg.InteractionExchange, "topic", true, false, false, false, nil); err != nil {
 		return err
@@ -107,8 +110,19 @@ func (r *RabbitMQ) ensureTopology() error {
 	if _, err := r.publish.QueueDeclare(r.cfg.ActionChangedQueue, true, false, false, false, nil); err != nil {
 		return err
 	}
-	return r.publish.QueueBind(r.cfg.ActionChangedQueue, r.cfg.ActionChangedRouting, r.cfg.InteractionExchange, false, nil)
+	if err := r.publish.QueueBind(r.cfg.ActionChangedQueue, r.cfg.ActionChangedRouting, r.cfg.InteractionExchange, false, nil); err != nil {
+		return err
+	}
+	if err := r.publish.ExchangeDeclare(r.cfg.VideoExchange, "topic", true, false, false, false, nil); err != nil {
+		return err
+	}
+	if _, err := r.publish.QueueDeclare(r.cfg.VideoPublishedQueue, true, false, false, false, nil); err != nil {
+		return err
+	}
+	return r.publish.QueueBind(r.cfg.VideoPublishedQueue, r.cfg.VideoPublishedRouting, r.cfg.VideoExchange, false, nil)
 }
+
+// normalizeConfig 保留自定义拓扑名称并补齐空白默认值。
 func normalizeConfig(c config.RabbitMQConfig) config.RabbitMQConfig {
 	if strings.TrimSpace(c.InteractionExchange) == "" {
 		c.InteractionExchange = "gcfeed.interaction"
@@ -119,5 +133,76 @@ func normalizeConfig(c config.RabbitMQConfig) config.RabbitMQConfig {
 	if strings.TrimSpace(c.ActionChangedRouting) == "" {
 		c.ActionChangedRouting = "interaction.action_changed"
 	}
+	if strings.TrimSpace(c.VideoExchange) == "" {
+		c.VideoExchange = defaultVideoExchange
+	}
+	if strings.TrimSpace(c.VideoPublishedQueue) == "" {
+		c.VideoPublishedQueue = defaultVideoPublishedQueue
+	}
+	if strings.TrimSpace(c.VideoPublishedRouting) == "" {
+		c.VideoPublishedRouting = defaultVideoPublishedRouting
+	}
 	return c
 }
+
+// PublishVideoPublished 发布持久化视频消息，保留事件编号和发送时间。
+func (r *RabbitMQ) PublishVideoPublished(ctx context.Context, event *applicationvideo.PublishedEvent) error {
+	if event == nil {
+		return nil
+	}
+	content, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	return r.publish.PublishWithContext(
+		ctx,
+		r.cfg.VideoExchange,
+		r.cfg.VideoPublishedRouting,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType:  "application/json",
+			DeliveryMode: amqp.Persistent,
+			MessageId:    event.EventID,
+			Timestamp:    time.Now(),
+			Body:         content,
+		},
+	)
+}
+
+// ConsumeVideoPublished 消费视频事件；无效消息丢弃、处理失败重新入队、成功逐条确认。
+func (r *RabbitMQ) ConsumeVideoPublished(ctx context.Context, handler func(context.Context, *applicationvideo.PublishedEvent) error) error {
+	deliveries, err := r.consume.ConsumeWithContext(
+		ctx,
+		r.cfg.VideoPublishedQueue,
+		"",
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		for delivery := range deliveries {
+			var event applicationvideo.PublishedEvent
+			if err := json.Unmarshal(delivery.Body, &event); err != nil {
+				_ = delivery.Nack(false, false)
+				continue
+			}
+			if err := handler(ctx, &event); err != nil {
+				_ = delivery.Nack(false, true)
+				continue
+			}
+			_ = delivery.Ack(false)
+		}
+	}()
+	return nil
+}
+
+const defaultVideoExchange = "videofeed.video"
+const defaultVideoPublishedQueue = "videofeed.video.published"
+const defaultVideoPublishedRouting = "video.published"
