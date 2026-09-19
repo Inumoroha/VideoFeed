@@ -103,7 +103,7 @@ func (r *RabbitMQ) ConsumeActionChanged(ctx context.Context, handler func(contex
 	return nil
 }
 
-// ensureTopology 声明互动、视频与曝光持久化交换机和队列，并绑定各自路由键。
+// ensureTopology 声明持久化交换机与队列，将视频事件分别绑定关注分发队列和向量队列。
 func (r *RabbitMQ) ensureTopology() error {
 	if err := r.publish.ExchangeDeclare(r.cfg.InteractionExchange, "topic", true, false, false, false, nil); err != nil {
 		return err
@@ -121,6 +121,12 @@ func (r *RabbitMQ) ensureTopology() error {
 		return err
 	}
 	if err := r.publish.QueueBind(r.cfg.VideoPublishedQueue, r.cfg.VideoPublishedRouting, r.cfg.VideoExchange, false, nil); err != nil {
+		return err
+	}
+	if _, err := r.publish.QueueDeclare(r.cfg.VideoEmbeddingQueue, true, false, false, false, nil); err != nil {
+		return err
+	}
+	if err := r.publish.QueueBind(r.cfg.VideoEmbeddingQueue, r.cfg.VideoPublishedRouting, r.cfg.VideoExchange, false, nil); err != nil {
 		return err
 	}
 	if err := r.publish.ExchangeDeclare(r.cfg.ExposureExchange, "topic", true, false, false, false, nil); err != nil {
@@ -164,6 +170,10 @@ func normalizeConfig(c config.RabbitMQConfig) config.RabbitMQConfig {
 	if c.ViewEventRecordedRouting == "" {
 		c.ViewEventRecordedRouting = defaultViewEventRecordedRouting
 	}
+	c.VideoEmbeddingQueue = strings.TrimSpace(c.VideoEmbeddingQueue)
+	if c.VideoEmbeddingQueue == "" {
+		c.VideoEmbeddingQueue = defaultVideoEmbeddingQueue
+	}
 	return c
 }
 
@@ -194,9 +204,19 @@ func (r *RabbitMQ) PublishVideoPublished(ctx context.Context, event *application
 
 // ConsumeVideoPublished 消费视频事件；无效消息丢弃、处理失败重新入队、成功逐条确认。
 func (r *RabbitMQ) ConsumeVideoPublished(ctx context.Context, handler func(context.Context, *applicationvideo.PublishedEvent) error) error {
+	return r.consumeVideoPublishedQueue(ctx, r.cfg.VideoPublishedQueue, handler)
+}
+
+// ConsumeVideoPublishedForEmbedding 从独立向量队列消费视频发布消息，不与关注分发消费者争抢消息。
+func (r *RabbitMQ) ConsumeVideoPublishedForEmbedding(ctx context.Context, handler func(context.Context, *applicationvideo.PublishedEvent) error) error {
+	return r.consumeVideoPublishedQueue(ctx, r.cfg.VideoEmbeddingQueue, handler)
+}
+
+// consumeVideoPublishedQueue 订阅指定视频队列，成功逐条确认、无效 JSON 丢弃、处理失败重新入队，上下文取消停止消费。
+func (r *RabbitMQ) consumeVideoPublishedQueue(ctx context.Context, queue string, handler func(context.Context, *applicationvideo.PublishedEvent) error) error {
 	deliveries, err := r.consume.ConsumeWithContext(
 		ctx,
-		r.cfg.VideoPublishedQueue,
+		queue,
 		"",
 		false,
 		false,
@@ -226,6 +246,7 @@ func (r *RabbitMQ) ConsumeVideoPublished(ctx context.Context, handler func(conte
 }
 
 const defaultVideoExchange = "videofeed.video"
+const defaultVideoEmbeddingQueue = "videofeed.video.embedding"
 const defaultVideoPublishedQueue = "videofeed.video.published"
 const defaultVideoPublishedRouting = "video.published"
 

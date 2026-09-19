@@ -57,6 +57,7 @@ type RedisConfig struct {
 
 // RabbitMQConfig 保存互动、视频与曝光事件队列的连接和拓扑配置。
 type RabbitMQConfig struct {
+	VideoEmbeddingQueue      string `mapstructure:"video_embedding_queue"`
 	ExposureExchange         string `mapstructure:"exposure_exchange"`
 	ViewEventRecordedQueue   string `mapstructure:"view_event_recorded_queue"`
 	ViewEventRecordedRouting string `mapstructure:"view_event_recorded_routing"`

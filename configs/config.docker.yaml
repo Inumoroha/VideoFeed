@@ -37,3 +37,4 @@ rabbitmq:
     exposure_exchange: "videofeed.exposure"
     view_event_recorded_queue: "videofeed.exposure.view_event_recorded"
     view_event_recorded_routing: "exposure.view_event_recorded"
+    video_embedding_queue: "videofeed.video.embedding"
