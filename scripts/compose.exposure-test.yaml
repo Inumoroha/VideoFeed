@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: exposure_test
+      POSTGRES_PASSWORD: exposure_test_only
+      POSTGRES_DB: exposure_test
+    ports:
+      - "127.0.0.1::5432"
+    volumes:
+      - postgres_test:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U exposure_test -d exposure_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: exposure_test
+      RABBITMQ_DEFAULT_PASS: exposure_test_only
+    ports:
+      - "127.0.0.1::5672"
+      - "127.0.0.1::15672"
+    volumes:
+      - rabbitmq_test:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping && rabbitmq-diagnostics -q check_port_connectivity"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "127.0.0.1::6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  postgres_test:
+  rabbitmq_test:
