@@ -114,7 +114,7 @@ docker compose down -v
 | ✅   | 视频     | GET    | `/api/videos/{videoId}`               | 视频详情                          |
 | ✅   | 视频     | GET    | `/api/users/me/videos`                | 我的作品列表                      |
 | ✅   | Feed     | GET    | `/api/feed-items`                     | 拉取视频流，支持 scene 和游标分页 |
-| [ ]  | Feed     | POST   | `/api/video-view-events`              | 上报曝光和观看事件                |
+| ✅  | Feed     | POST   | `/api/video-view-events`              | 上报曝光和观看事件                |
 | [ ]  | 推荐     | POST   | `/internal/recommendation-candidates` | 召回、排序、打散推荐候选          |
 | [ ]  | 推荐     | POST   | `/internal/exposures`                 | 写入曝光记录                      |
 | ✅   | 互动     | PUT    | `/api/videos/{videoId}/like`          | 点赞                              |
@@ -188,3 +188,5 @@ docker compose down -v
 - 系统架构图：`docs/architecture.md`
 
 
+
+曝光与观看上报已实现：登录后调用 `POST /api/video-view-events`，使用 PostgreSQL 保存流水与曝光聚合，并向 RabbitMQ 发布画像事件。配置、行为边界及部署验证见 [Feed 模块](docs/modules/feed.md#7-曝光与观看上报)；逐文件迁移审计见 [fa476283](docs/migration-fa476283.md)。

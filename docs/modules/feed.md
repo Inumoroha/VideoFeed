@@ -12,6 +12,8 @@
 
 | POST | `/api/feed/query` | 通过 JSON 请求体查询 scene、cursor、limit、context | timeline/hot 可匿名，following 必须登录 | - |
 
+| POST | `/api/video-view-events` | 上报曝光和观看事件 | 必须登录 | 无；request_id 不去重 |
+
 ### 2.1 Feed Items API
 
 `GET /api/feed-items` 支持 `cursor`、`limit` 和 `scene` 查询参数。`limit` 默认 10，最大 100，非正数返回 400；`scene` 默认 `timeline`，可选 `timeline`、`hot`、`following`。
@@ -104,3 +106,42 @@ feed:timeline:v1:limit:{limit}:cursor:{sha1(cursor)}
 前端构建命令为 `cd web` 后运行 `npm run build`；开发服务默认端口为 5173。迁移映射和验证结果见 [前端入口迁移审计](../migration-7d58cd0.md)。
 
 真实账号、数据库和浏览器联调结果及修复说明见 [联调报告](../following-live-integration.md)。
+
+## 7. 曝光与观看上报
+
+`POST /api/video-view-events` 使用现有 Bearer JWT，从认证上下文取得用户 ID。请求示例：
+
+```json
+{"video_id":1001,"scene":"timeline","request_id":"req-1","event_type":"exposed","watch_ms":0,"completed":false}
+```
+
+`video_id` 必须为正数且视频状态为已发布；`scene` 去空白、转小写后非空且最多 32 个 UTF-8 字节（不限定 Feed 查询场景）；`request_id` 去空白后最多 64 字节，可省略。`event_type` 去空白、转小写后支持 exposed、play、complete、skip；`watch_ms` 非负，缺省为 0；`completed` 缺省为 false，complete 强制为 true。
+
+成功返回 201，响应包含 `event`（id、user_id、video_id、scene、event_type、watch_ms、completed、created_at 及非空 request_id）；exposed 还返回 `exposure`（user_id、video_id、first_exposed_at、last_exposed_at、exposure_count、last_scene）。参数或 JSON 错误返回 400，未认证返回 401，视频不存在或未发布返回 404，存储失败返回 500，错误结构统一为 `{"error":"..."}`。完整结构及示例见 `api/openapi.yaml`。
+
+### 数据表与并发
+
+| 表 | 字段与约束 |
+| --- | --- |
+| `video_view_events` | id 主键；user_id、video_id、scene、可空 request_id、event_type、watch_ms、completed、created_at；保留用户时间、视频时间、场景时间及请求事件索引 |
+| `exposures` | id 主键；user_id + video_id 唯一；first_exposed_at、last_exposed_at、exposure_count、last_scene、created_at、updated_at；保留用户/视频最近曝光索引 |
+
+路由初始化通过 GORM 迁移两张表。仓储在同一 PostgreSQL 事务中校验视频、追加流水、更新聚合并读取结果；任一步失败回滚。聚合使用 `ON CONFLICT (user_id, video_id) DO UPDATE` 和数据库原子加一，首次时间不变。索引名称带表名前缀，避免与 `feed_inbox` 的历史索引重名。`request_id` 只做关联，不提供幂等性：重试相同请求仍追加流水，重复 exposed 仍累加。play、complete、skip 不创建或更新曝光聚合。
+
+### 画像消息与部署
+
+落库成功后构造 `ViewEventRecordedEvent`，包含 event_id、view_event_id、user_id、video_id、scene、可选 request_id、event_type、watch_ms、completed、UTC recorded_at 和 occurred_at，以及可选 exposure_count。随机事件 ID 生成失败时沿用纳秒时间戳回退。
+
+RabbitMQ 使用持久化 topic 交换机、持久化队列和持久化 JSON 消息，消息属性保留事件编号和发送时间。消费接口逐条确认成功消息，非法 JSON 拒绝且不重入队，处理失败拒绝并重入队；消费取消或连接关闭会结束消费。未加入发布确认、发件箱、自动重连或发布重试；发布失败不回滚已提交行为，初始化失败时记录日志并禁用发布器。此次仅提供画像消费接口，没有启动画像计算 worker，也没有实现推荐去重策略。
+
+| YAML 配置项（rabbitmq 下） | 环境变量 | 默认值 |
+| --- | --- | --- |
+| exposure_exchange | RABBITMQ_EXPOSURE_EXCHANGE | videofeed.exposure |
+| view_event_recorded_queue | RABBITMQ_VIEW_EVENT_RECORDED_QUEUE | videofeed.exposure.view_event_recorded |
+| view_event_recorded_routing | RABBITMQ_VIEW_EVENT_RECORDED_ROUTING | exposure.view_event_recorded |
+
+两个配置文件 `configs/config.yaml`、`configs/config.docker.yaml` 均包含新增键。根目录 Compose 沿用 PostgreSQL、Redis、RabbitMQ、现有数据卷、健康检查和启动依赖，无新增服务或依赖。覆盖容器配置需将上述环境变量传入 API 容器；RabbitMQ 账号必须与实际服务一致。API 9000、Web 5173、宿主 PostgreSQL 5433。启动命令仍为 `docker compose up -d --build`。
+
+在仓库根目录运行 `go test ./...`、`go vet ./...`、`git diff --check` 和 `docker compose config --quiet`。可选真实服务测试使用 `VIDEOFEED_TEST_POSTGRES_URL` 与 `VIDEOFEED_TEST_AMQP_URL` 指向专用测试服务；测试使用独立数据库 schema 或消息拓扑并清理，未配置时跳过。验证结果与限制见 [迁移审计](../migration-fa476283.md)。
+
+真实服务验证可运行 `python scripts/verify_exposure_live.py`：脚本自动启动并清理独立 Docker 服务，测试数据库并发与消息消费后，再验证实际 API 的注册登录、曝光上报和故障回退。已执行结果见 [曝光真实服务验证](../exposure-live-verification.md)。
