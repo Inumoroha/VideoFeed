@@ -5,6 +5,8 @@ import base64
 import concurrent.futures
 from datetime import datetime
 import json
+import hashlib
+import math
 import os
 from pathlib import Path
 import shutil
@@ -59,10 +61,11 @@ def require(condition, message):
         raise AssertionError(message)
 
 
-# main 创建隔离服务，运行真实测试与 HTTP 故障联调，保存脱敏结果并清理进程、容器和数据卷。
+# main 创建隔离服务，运行曝光及可选视频向量真实链路，保存脱敏结果并清理全部测试资源。
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", default="docs/exposure-live-results.json")
+    parser.add_argument("--embedding", action="store_true", help="同时验证视频向量存储链路")
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     project = "videofeed-exposure-e2e-" + uuid.uuid4().hex[:8]
@@ -108,12 +111,17 @@ def main():
             evidence["versions"] = {"go": run(["go", "version"]), "docker": run(["docker", "version", "--format", "{{.Server.Version}}"]),
                                     "postgres": sql("SHOW server_version"), "rabbitmq": run(compose + ["exec", "-T", "rabbitmq", "rabbitmqctl", "version"]),
                                     "redis": run(compose + ["exec", "-T", "redis", "redis-server", "--version"])}
-            result = run(["go", "test", "-count=1", "-v", "./internal/infrastructure/persistence/exposure", "./internal/infrastructure/mq",
-                          "-run", "TestExposure(Postgres|Queue)Live"], cwd=root, env=env)
-            for name in ("TestExposurePostgresLive", "TestExposureQueueLive"):
+            packages = ["./internal/infrastructure/persistence/exposure", "./internal/infrastructure/mq"]
+            names = ["TestExposurePostgresLive", "TestExposureQueueLive"]
+            if args.embedding:
+                packages.append("./internal/infrastructure/persistence/embedding")
+                names.extend(["TestEmbeddingPostgresLive", "TestEmbeddingQueueLive"])
+            result = run(["go", "test", "-count=1", "-v", *packages, "-run", "^(" + "|".join(names) + ")$"], cwd=root, env=env)
+            for name in names:
                 require(f"--- PASS: {name}" in result and f"--- SKIP: {name}" not in result, name + " 未实际通过")
                 passed(name)
             require(sql("SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'exposure_test_%'") == "0", "隔离 schema 未清理")
+            require(sql("SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'embedding_test_%'") == "0", "向量测试 schema 未清理")
             management = f"http://127.0.0.1:{management_port}/api"
             auth = {"Authorization": "Basic " + base64.b64encode(b"exposure_test:exposure_test_only").decode()}
 
@@ -140,6 +148,7 @@ def main():
                         "RABBITMQ_INTERACTION_EXCHANGE": "exposure.e2e.interaction", "RABBITMQ_ACTION_CHANGED_QUEUE": "exposure.e2e.actions",
                         "RABBITMQ_ACTION_CHANGED_ROUTING": "actions", "RABBITMQ_VIDEO_EXCHANGE": "exposure.e2e.video",
                         "RABBITMQ_VIDEO_PUBLISHED_QUEUE": "exposure.e2e.videos", "RABBITMQ_VIDEO_PUBLISHED_ROUTING": "videos",
+                        "RABBITMQ_VIDEO_EMBEDDING_QUEUE": "exposure.e2e.embedding",
                         "RABBITMQ_EXPOSURE_EXCHANGE": "exposure.e2e.exposure", "RABBITMQ_VIEW_EVENT_RECORDED_QUEUE": "exposure.e2e.views",
                         "RABBITMQ_VIEW_EVENT_RECORDED_ROUTING": "views"})
             base = f"http://127.0.0.1:{api_port}"
@@ -183,6 +192,58 @@ def main():
             require(status == 201, "视频发布失败")
             video_id = video["id"]
             passed("actual_api_startup_registration_login_video_publish")
+
+            if args.embedding:
+                # embedding_row 从实际数据库读取指定视频的本地模型记录。
+                def embedding_row():
+                    result = sql(f"SELECT row_to_json(v) FROM video_embedding v WHERE video_id={video_id} AND model='hash-ngram-v1'")
+                    return json.loads(result) if result else None
+
+                # publish_video 向真实视频交换机发送指定发布消息，验证独立队列绑定。
+                def publish_video(title, description, raw=None):
+                    body = raw if raw is not None else json.dumps({"event_id": uuid.uuid4().hex, "video_id": video_id, "title": title, "description": description})
+                    result = admin("/exchanges/%2F/exposure.e2e.video/publish", "POST", {"properties": {"delivery_mode": 2}, "routing_key": "videos", "payload": body, "payload_encoding": "string"})
+                    require(result["routed"], "发布事件未路由")
+
+                wait_until(lambda: embedding_row() is not None)
+                first_embedding = embedding_row()
+                vector = first_embedding["embedding_json"]
+                require(first_embedding["dimension"] == len(vector) == 128 and abs(math.sqrt(sum(v*v for v in vector))-1) < 1e-10, "实际发布未生成归一化 128 维向量")
+                require(first_embedding["text_hash"] == hashlib.sha256("曝光联调视频\nisolated test".encode()).hexdigest(), "发布视频文本哈希错误")
+                wait_until(lambda: admin("/queues/%2F/exposure.e2e.embedding").get("consumers", 0) == 1)
+                queue = admin("/queues/%2F/exposure.e2e.embedding")
+                require(queue["durable"] and queue["consumers"] == 1, "向量队列未持久化或消费者未启动")
+                # 相同内容重投必须执行覆盖写，但保持创建时间和唯一记录。
+                publish_video("曝光联调视频", "isolated test")
+                wait_until(lambda: embedding_row()["updated_at"] != first_embedding["updated_at"])
+                require(embedding_row()["created_at"] == first_embedding["created_at"] and sql(f"SELECT count(*) FROM video_embedding WHERE video_id={video_id}") == "1", "重复消息破坏唯一性或创建时间")
+                publish_video("", "", raw="invalid-json")
+                publish_video("改变后的标题", "新的简介")
+                changed_hash = hashlib.sha256("改变后的标题\n新的简介".encode()).hexdigest()
+                wait_until(lambda: embedding_row()["text_hash"] == changed_hash)
+                require(embedding_row()["embedding_json"] != vector, "内容更新未改变向量")
+                passed("video_publish_embedding_128d_hash_replay_update_and_poison_rejection")
+                # 暂时令真实表拒绝更新，再解除约束，验证消费者重投成功。
+                sql("ALTER TABLE video_embedding ADD CONSTRAINT embedding_retry_block CHECK (dimension < 0) NOT VALID")
+                retry_hash = hashlib.sha256("数据库恢复重试\n内容".encode()).hexdigest()
+                publish_video("数据库恢复重试", "内容")
+                wait_until(lambda: "failed to save video embedding" in (work / "api.log").read_text(encoding="utf-8") or "embedding_retry_block" in (work / "api.log").read_text(encoding="utf-8"))
+                require(embedding_row()["text_hash"] == changed_hash, "失败更新覆盖了旧记录")
+                sql("ALTER TABLE video_embedding DROP CONSTRAINT embedding_retry_block")
+                wait_until(lambda: embedding_row()["text_hash"] == retry_hash)
+                require(sql(f"SELECT count(*) FROM video_embedding WHERE video_id={video_id}") == "1", "重投生成重复行")
+                passed("real_embedding_storage_failure_requeue_and_recovery")
+                # 将 Redis 指向不可达地址后重启实际路由装配，向量 worker 仍应独立工作。
+                stop_api()
+                env["REDIS_ADDR"] = "127.0.0.1:1"
+                start_api()
+                publish_video("Redis 不可达", "向量仍保存")
+                independent_hash = hashlib.sha256("Redis 不可达\n向量仍保存".encode()).hexdigest()
+                wait_until(lambda: embedding_row()["text_hash"] == independent_hash)
+                passed("embedding_worker_operates_with_redis_unavailable")
+                stop_api()
+                env["REDIS_ADDR"] = f"127.0.0.1:{redis_port}"
+                start_api()
 
             # report 向真实应用提交观看事件，并核对预期 HTTP 状态。
             def report(kind="exposed", status=201, headers=None, **fields):

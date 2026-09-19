@@ -21,13 +21,14 @@ func TestExposureQueueLive(t *testing.T) {
 		t.Skip("未配置隔离 RabbitMQ 测试连接")
 	}
 	name := fmt.Sprintf("videofeed.test.%d", time.Now().UnixNano())
-	cfg := config.RabbitMQConfig{ExposureExchange: name + ".exposure", ViewEventRecordedQueue: name + ".views", ViewEventRecordedRouting: "view", URL: url, InteractionExchange: name + ".interaction", ActionChangedQueue: name + ".actions", ActionChangedRouting: "action", VideoExchange: name + ".video", VideoPublishedQueue: name + ".published", VideoPublishedRouting: "published"}
+	cfg := config.RabbitMQConfig{VideoEmbeddingQueue: name + ".embedding", ExposureExchange: name + ".exposure", ViewEventRecordedQueue: name + ".views", ViewEventRecordedRouting: "view", URL: url, InteractionExchange: name + ".interaction", ActionChangedQueue: name + ".actions", ActionChangedRouting: "action", VideoExchange: name + ".video", VideoPublishedQueue: name + ".published", VideoPublishedRouting: "published"}
 	broker, err := NewRabbitMQ(cfg)
 	if err != nil {
 		t.Fatal("连接本地测试消息服务失败")
 	}
 	defer broker.Close()
 	defer func() {
+		_, _ = broker.publish.QueueDelete(cfg.VideoEmbeddingQueue, false, false, false)
 		_, _ = broker.publish.QueueDelete(cfg.ViewEventRecordedQueue, false, false, false)
 		_ = broker.publish.ExchangeDelete(cfg.ExposureExchange, false, false)
 		_, _ = broker.publish.QueueDelete(cfg.VideoPublishedQueue, false, false, false)

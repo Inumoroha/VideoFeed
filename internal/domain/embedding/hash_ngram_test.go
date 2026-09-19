@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestHashNgramVectorizerDeterministic 验证相同输入产生相同模型、维度及单位范数向量。
+// TestHashNgramVectorizerDeterministic 验证确定性、默认模型、维度及向量归一化。
 func TestHashNgramVectorizerDeterministic(t *testing.T) {
 	vectorizer := NewHashNgramVectorizer()
 
@@ -28,7 +28,7 @@ func TestHashNgramVectorizerDeterministic(t *testing.T) {
 	}
 }
 
-// TestHashNgramVectorizerSimilarity 验证给定相关文本的余弦得分高于无关文本。
+// TestHashNgramVectorizerSimilarity 验证相关文本得分更高，且无关文本不产生相同向量。
 func TestHashNgramVectorizerSimilarity(t *testing.T) {
 	vectorizer := NewHashNgramVectorizer()
 
@@ -47,9 +47,12 @@ func TestHashNgramVectorizerSimilarity(t *testing.T) {
 	if similarScore <= differentScore {
 		t.Fatalf("expected similar text score to be higher: similar=%f different=%f", similarScore, differentScore)
 	}
+	if sameVector(base, different) {
+		t.Fatalf("different text produced same vector")
+	}
 }
 
-// TestHashNgramVectorizerEmptyText 验证空白文本生成默认维度的零向量。
+// TestHashNgramVectorizerEmptyText 验证空白文本生成零向量。
 func TestHashNgramVectorizerEmptyText(t *testing.T) {
 	vectorizer := NewHashNgramVectorizer()
 
@@ -62,7 +65,21 @@ func TestHashNgramVectorizerEmptyText(t *testing.T) {
 	}
 }
 
-// TestCosineSimilarityDimensionMismatch 验证不同维度返回约定的维度错误。
+// TestBuildVideoTextAndHash 验证标题简介拼接、文本哈希稳定性和内容差异。
+func TestBuildVideoTextAndHash(t *testing.T) {
+	text := BuildVideoText(" 篮球训练 ", " 投篮技巧 ")
+	if text != "篮球训练\n投篮技巧" {
+		t.Fatalf("unexpected video text: %q", text)
+	}
+	if TextHash(text) != TextHash(text) {
+		t.Fatalf("text hash is not stable")
+	}
+	if TextHash(text) == TextHash("美食探店\n火锅推荐") {
+		t.Fatalf("different text has same hash")
+	}
+}
+
+// TestCosineSimilarityDimensionMismatch 验证不同维度返回约定错误。
 func TestCosineSimilarityDimensionMismatch(t *testing.T) {
 	_, err := CosineSimilarity([]float64{1, 0}, []float64{1})
 	if err != ErrDimensionMismatch {
@@ -77,4 +94,17 @@ func norm(vector []float64) float64 {
 		sum += value * value
 	}
 	return math.Sqrt(sum)
+}
+
+// sameVector 逐维判断两个向量是否完全相同。
+func sameVector(left []float64, right []float64) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
