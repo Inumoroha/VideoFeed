@@ -6,6 +6,75 @@ servers:
   - url: /
     description: Current API server
 paths:
+  /api/video-view-events:
+    post:
+      tags:
+      - Exposure
+      summary: 上报曝光和观看事件
+      operationId: createVideoViewEvent
+      description: 用户身份来自 JWT；视频必须处于已发布状态。每次请求追加流水，exposed 在同一事务中原子累加曝光。request_id 不去重。数据库提交后尽力发布画像消息，消息失败不改变成功响应。
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateViewEventRequest'
+            example:
+              video_id: 1001
+              scene: timeline
+              request_id: req-1
+              event_type: exposed
+              watch_ms: 0
+              completed: false
+      responses:
+        '201':
+          description: 行为已保存；曝光事件同时返回聚合
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateViewEventResponse'
+              examples:
+                exposed:
+                  value:
+                    event:
+                      id: 1
+                      user_id: 42
+                      video_id: 1001
+                      scene: timeline
+                      request_id: req-1
+                      event_type: exposed
+                      watch_ms: 0
+                      completed: false
+                      created_at: '2026-05-17T11:12:17Z'
+                    exposure:
+                      user_id: 42
+                      video_id: 1001
+                      first_exposed_at: '2026-05-17T11:12:17Z'
+                      last_exposed_at: '2026-05-17T11:12:17Z'
+                      exposure_count: 1
+                      last_scene: timeline
+                complete:
+                  value:
+                    event:
+                      id: 2
+                      user_id: 42
+                      video_id: 1001
+                      scene: timeline
+                      request_id: req-1
+                      event_type: complete
+                      watch_ms: 12000
+                      completed: true
+                      created_at: '2026-05-17T11:12:17Z'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/VideoNotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /health:
     get:
       tags:
@@ -780,6 +849,115 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    CreateViewEventRequest:
+      type: object
+      required:
+      - video_id
+      - scene
+      - event_type
+      properties:
+        video_id:
+          type: integer
+          format: int64
+          minimum: 1
+        scene:
+          type: string
+          description: 去除首尾空白并转为小写后必须非空，UTF-8 字节长度最多 32；不限制为 Feed 查询支持的场景。
+        request_id:
+          type: string
+          description: 可省略；去除首尾空白后 UTF-8 字节长度最多 64。用于关联请求，不是幂等键。
+        event_type:
+          type: string
+          description: 去除首尾空白并转小写后必须为 exposed、play、complete 或 skip。
+        watch_ms:
+          type: integer
+          minimum: 0
+          default: 0
+        completed:
+          type: boolean
+          default: false
+          description: complete 事件始终保存为 true，其余事件保留传入值。
+    ViewEventResponse:
+      type: object
+      required:
+      - video_id
+      - scene
+      - event_type
+      - watch_ms
+      - completed
+      - id
+      - user_id
+      - created_at
+      properties:
+        video_id:
+          type: integer
+          format: int64
+          minimum: 1
+        scene:
+          type: string
+          description: 去除首尾空白并转为小写后必须非空，UTF-8 字节长度最多 32；不限制为 Feed 查询支持的场景。
+        request_id:
+          type: string
+          description: 可省略；去除首尾空白后 UTF-8 字节长度最多 64。用于关联请求，不是幂等键。
+        event_type:
+          type: string
+          enum:
+          - exposed
+          - play
+          - complete
+          - skip
+        watch_ms:
+          type: integer
+          minimum: 0
+        completed:
+          type: boolean
+          description: complete 事件始终保存为 true，其余事件保留传入值。
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+    ExposureResponse:
+      type: object
+      required:
+      - user_id
+      - video_id
+      - first_exposed_at
+      - last_exposed_at
+      - exposure_count
+      - last_scene
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        video_id:
+          type: integer
+          format: int64
+        first_exposed_at:
+          type: string
+          format: date-time
+        last_exposed_at:
+          type: string
+          format: date-time
+        exposure_count:
+          type: integer
+          minimum: 1
+        last_scene:
+          type: string
+    CreateViewEventResponse:
+      type: object
+      required:
+      - event
+      properties:
+        event:
+          $ref: '#/components/schemas/ViewEventResponse'
+        exposure:
+          $ref: '#/components/schemas/ExposureResponse'
+      description: exposure 仅在 exposed 事件中出现；空 request_id 不输出。
     HealthResponse:
       type: object
       required:

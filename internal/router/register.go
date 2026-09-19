@@ -3,6 +3,9 @@ package router
 import (
 	"context"
 	"fmt"
+	applicationexposure "github.com/inumoroha/video-feed/internal/application/exposure"
+	exposurehandler "github.com/inumoroha/video-feed/internal/handler/exposure"
+	exposurepersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/exposure"
 	"log"
 	"path/filepath"
 
@@ -64,6 +67,9 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	if err := gormDB.AutoMigrate(&feedpersistence.InboxModel{}); err != nil {
 		return fmt.Errorf("migrate feed inbox: %w", err)
 	}
+	if err := gormDB.AutoMigrate(&exposurepersistence.ViewEventModel{}, &exposurepersistence.ExposureModel{}); err != nil {
+		return fmt.Errorf("migrate exposures: %w", err)
+	}
 	if err := videopersistence.EnsureStats(gormDB); err != nil {
 		return fmt.Errorf("ensure video stats: %w", err)
 	}
@@ -77,6 +83,7 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	userService := applicationuser.NewService(userRepository, jwtManager)
 	userHandler := userhandler.NewHandler(userService)
 	videoRepository := videopersistence.New(gormDB)
+	exposureOptions := []applicationexposure.Option{}
 	videoOptions := []applicationvideo.Option{}
 	feedRepository := feedpersistence.New(gormDB)
 	feedOptions := []applicationfeed.Option{}
@@ -98,6 +105,7 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 		if err != nil {
 			log.Printf("rabbitmq disabled: %v", err)
 		} else {
+			exposureOptions = append(exposureOptions, applicationexposure.WithViewEventPublisher(broker))
 			videoOptions = append(videoOptions, applicationvideo.WithPublishedEventPublisher(broker))
 			if feedCache != nil {
 				interactionOptions = append(interactionOptions, applicationinteraction.WithAsyncActionPipeline(feedCache, broker))
@@ -111,6 +119,8 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 			}
 		}
 	}
+	exposureService := applicationexposure.NewService(exposurepersistence.New(gormDB), exposureOptions...)
+	exposureHandler := exposurehandler.NewHandler(exposureService)
 	videoService := applicationvideo.NewService(videoRepository, videoOptions...)
 	videoHandler := videohandler.NewHandler(videoService)
 	interactionService := applicationinteraction.NewService(interactionRepository, interactionOptions...)
@@ -126,7 +136,7 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	g.GET("/health", handler.Health)
 	g.Static("/uploads", uploadRoot)
 
-	registerRoutes(g, userHandler, videoHandler, feedHandler, uploadHandler, jwtManager, interactionHandler, relationHandler)
+	registerRoutes(g, userHandler, videoHandler, feedHandler, uploadHandler, jwtManager, interactionHandler, relationHandler, exposureHandler)
 	registerRelationRoutes(g, jwtManager, relationHandler)
 
 	return nil
@@ -146,15 +156,18 @@ func registerRelationRoutes(g *gin.Engine, jwtManager *authjwt.Manager, relation
 	relations.GET("/followers", relationHandler.ListFollowers)
 }
 
-// registerRoutes 注册认证、用户、视频、互动、信息流和上传接口；互动处理器为空时跳过互动路由。
+// registerRoutes 注册认证、用户、视频、信息流和上传接口，并按非空可选处理器注册互动、关系及曝光路由。
 func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandler *videohandler.Handler, feedHandler *feedhandler.Handler, uploadHandler *uploadhandler.Handler, jwtManager *authjwt.Manager, optionalHandlers ...any) {
 	authMiddleware := middleware.NewJWTAuthMiddleware(jwtManager)
 	optionalMiddleware := middleware.NewOptionalJWTAuth(jwtManager)
 	api := g.Group("/api")
+	var exposureHandler *exposurehandler.Handler
 	var interactionHandler *interactionhandler.Handler
 	var relationHandler *relationhandler.Handler
 	for _, handler := range optionalHandlers {
 		switch value := handler.(type) {
+		case *exposurehandler.Handler:
+			exposureHandler = value
 		case *interactionhandler.Handler:
 			interactionHandler = value
 		case *relationhandler.Handler:
@@ -187,6 +200,9 @@ func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandle
 
 	api.GET("/feed-items", optionalMiddleware, feedHandler.ListFeedItems)
 	api.POST("/feed/query", optionalMiddleware, feedHandler.Query)
+	if exposureHandler != nil {
+		api.POST("/video-view-events", authMiddleware, exposureHandler.CreateViewEvent)
+	}
 
 	if interactionHandler != nil {
 		videos.PUT("/:videoId/like", authMiddleware, interactionHandler.Like)
