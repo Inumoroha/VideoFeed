@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	applicationexposure "github.com/inumoroha/video-feed/internal/application/exposure"
 	applicationvideo "github.com/inumoroha/video-feed/internal/application/video"
 	"strings"
 	"time"
@@ -13,7 +14,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// RabbitMQ 封装互动和视频事件的发布与消费通道。
+// RabbitMQ 封装互动、视频和曝光事件的发布与消费通道。
 type RabbitMQ struct {
 	conn    *amqp.Connection
 	publish *amqp.Channel
@@ -21,7 +22,7 @@ type RabbitMQ struct {
 	cfg     config.RabbitMQConfig
 }
 
-// NewRabbitMQ 连接 RabbitMQ 并声明互动和视频交换机、队列及绑定；初始化失败时关闭已创建资源。
+// NewRabbitMQ 连接 RabbitMQ 并声明互动、视频和曝光交换机、队列及绑定；初始化失败时关闭已创建资源。
 func NewRabbitMQ(cfg config.RabbitMQConfig) (*RabbitMQ, error) {
 	cfg = normalizeConfig(cfg)
 	if strings.TrimSpace(cfg.URL) == "" {
@@ -102,7 +103,7 @@ func (r *RabbitMQ) ConsumeActionChanged(ctx context.Context, handler func(contex
 	return nil
 }
 
-// ensureTopology 声明互动与视频持久化交换机和队列，并绑定各自路由键。
+// ensureTopology 声明互动、视频与曝光持久化交换机和队列，并绑定各自路由键。
 func (r *RabbitMQ) ensureTopology() error {
 	if err := r.publish.ExchangeDeclare(r.cfg.InteractionExchange, "topic", true, false, false, false, nil); err != nil {
 		return err
@@ -119,7 +120,16 @@ func (r *RabbitMQ) ensureTopology() error {
 	if _, err := r.publish.QueueDeclare(r.cfg.VideoPublishedQueue, true, false, false, false, nil); err != nil {
 		return err
 	}
-	return r.publish.QueueBind(r.cfg.VideoPublishedQueue, r.cfg.VideoPublishedRouting, r.cfg.VideoExchange, false, nil)
+	if err := r.publish.QueueBind(r.cfg.VideoPublishedQueue, r.cfg.VideoPublishedRouting, r.cfg.VideoExchange, false, nil); err != nil {
+		return err
+	}
+	if err := r.publish.ExchangeDeclare(r.cfg.ExposureExchange, "topic", true, false, false, false, nil); err != nil {
+		return err
+	}
+	if _, err := r.publish.QueueDeclare(r.cfg.ViewEventRecordedQueue, true, false, false, false, nil); err != nil {
+		return err
+	}
+	return r.publish.QueueBind(r.cfg.ViewEventRecordedQueue, r.cfg.ViewEventRecordedRouting, r.cfg.ExposureExchange, false, nil)
 }
 
 // normalizeConfig 保留自定义拓扑名称并补齐空白默认值。
@@ -141,6 +151,18 @@ func normalizeConfig(c config.RabbitMQConfig) config.RabbitMQConfig {
 	}
 	if strings.TrimSpace(c.VideoPublishedRouting) == "" {
 		c.VideoPublishedRouting = defaultVideoPublishedRouting
+	}
+	c.ExposureExchange = strings.TrimSpace(c.ExposureExchange)
+	c.ViewEventRecordedQueue = strings.TrimSpace(c.ViewEventRecordedQueue)
+	c.ViewEventRecordedRouting = strings.TrimSpace(c.ViewEventRecordedRouting)
+	if c.ExposureExchange == "" {
+		c.ExposureExchange = defaultExposureExchange
+	}
+	if c.ViewEventRecordedQueue == "" {
+		c.ViewEventRecordedQueue = defaultViewEventRecordedQueue
+	}
+	if c.ViewEventRecordedRouting == "" {
+		c.ViewEventRecordedRouting = defaultViewEventRecordedRouting
 	}
 	return c
 }
@@ -206,3 +228,70 @@ func (r *RabbitMQ) ConsumeVideoPublished(ctx context.Context, handler func(conte
 const defaultVideoExchange = "videofeed.video"
 const defaultVideoPublishedQueue = "videofeed.video.published"
 const defaultVideoPublishedRouting = "video.published"
+
+// PublishViewEventRecorded 发布持久化画像事件，保留消息编号、时间和 JSON 内容；空事件不发送。
+func (r *RabbitMQ) PublishViewEventRecorded(ctx context.Context, event *applicationexposure.ViewEventRecordedEvent) error {
+	if event == nil {
+		return nil
+	}
+	content, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	return r.publish.PublishWithContext(
+		ctx,
+		r.cfg.ExposureExchange,
+		r.cfg.ViewEventRecordedRouting,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType:  "application/json",
+			DeliveryMode: amqp.Persistent,
+			MessageId:    event.EventID,
+			Timestamp:    time.Now(),
+			Body:         content,
+		},
+	)
+}
+
+// ConsumeViewEventRecorded 启动画像事件消费；成功确认、无效 JSON 丢弃、处理失败重新入队，上下文取消结束消费。
+func (r *RabbitMQ) ConsumeViewEventRecorded(ctx context.Context, handler func(context.Context, *applicationexposure.ViewEventRecordedEvent) error) error {
+	deliveries, err := r.consume.ConsumeWithContext(
+		ctx,
+		r.cfg.ViewEventRecordedQueue,
+		"",
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		for delivery := range deliveries {
+			handleViewEventDelivery(ctx, delivery, handler)
+		}
+	}()
+	return nil
+}
+
+const defaultExposureExchange = "videofeed.exposure"
+const defaultViewEventRecordedQueue = "videofeed.exposure.view_event_recorded"
+const defaultViewEventRecordedRouting = "exposure.view_event_recorded"
+
+// handleViewEventDelivery 解析单条画像消息，成功确认、格式错误丢弃、业务失败重新入队；确认错误与原协议一致不再重试。
+func handleViewEventDelivery(ctx context.Context, delivery amqp.Delivery, handler func(context.Context, *applicationexposure.ViewEventRecordedEvent) error) {
+	var event applicationexposure.ViewEventRecordedEvent
+	if err := json.Unmarshal(delivery.Body, &event); err != nil {
+		_ = delivery.Nack(false, false)
+		return
+	}
+	if err := handler(ctx, &event); err != nil {
+		_ = delivery.Nack(false, true)
+		return
+	}
+	_ = delivery.Ack(false)
+}

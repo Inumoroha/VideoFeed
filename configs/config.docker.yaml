@@ -34,3 +34,6 @@ rabbitmq:
     video_exchange: "videofeed.video"
     video_published_queue: "videofeed.video.published"
     video_published_routing: "video.published"
+    exposure_exchange: "videofeed.exposure"
+    view_event_recorded_queue: "videofeed.exposure.view_event_recorded"
+    view_event_recorded_routing: "exposure.view_event_recorded"

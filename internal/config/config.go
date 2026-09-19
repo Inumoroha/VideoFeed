@@ -55,13 +55,16 @@ type RedisConfig struct {
 	DB       int    `mapstructure:"db"`
 }
 
-// RabbitMQConfig 保存互动与视频事件队列的连接和拓扑配置。
+// RabbitMQConfig 保存互动、视频与曝光事件队列的连接和拓扑配置。
 type RabbitMQConfig struct {
-	VideoExchange         string `mapstructure:"video_exchange"`
-	VideoPublishedQueue   string `mapstructure:"video_published_queue"`
-	VideoPublishedRouting string `mapstructure:"video_published_routing"`
-	URL                   string `mapstructure:"url"`
-	InteractionExchange   string `mapstructure:"interaction_exchange"`
-	ActionChangedQueue    string `mapstructure:"action_changed_queue"`
-	ActionChangedRouting  string `mapstructure:"action_changed_routing"`
+	ExposureExchange         string `mapstructure:"exposure_exchange"`
+	ViewEventRecordedQueue   string `mapstructure:"view_event_recorded_queue"`
+	ViewEventRecordedRouting string `mapstructure:"view_event_recorded_routing"`
+	VideoExchange            string `mapstructure:"video_exchange"`
+	VideoPublishedQueue      string `mapstructure:"video_published_queue"`
+	VideoPublishedRouting    string `mapstructure:"video_published_routing"`
+	URL                      string `mapstructure:"url"`
+	InteractionExchange      string `mapstructure:"interaction_exchange"`
+	ActionChangedQueue       string `mapstructure:"action_changed_queue"`
+	ActionChangedRouting     string `mapstructure:"action_changed_routing"`
 }
