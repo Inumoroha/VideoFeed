@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/gin-gonic/gin"
+	applicationembedding "github.com/inumoroha/video-feed/internal/application/embedding"
 	applicationfeed "github.com/inumoroha/video-feed/internal/application/feed"
 	applicationinteraction "github.com/inumoroha/video-feed/internal/application/interaction"
 	applicationrelation "github.com/inumoroha/video-feed/internal/application/relation"
@@ -27,6 +28,7 @@ import (
 	feedcache "github.com/inumoroha/video-feed/internal/infrastructure/cache/feed"
 	infraredis "github.com/inumoroha/video-feed/internal/infrastructure/cache/redis"
 	inframq "github.com/inumoroha/video-feed/internal/infrastructure/mq"
+	embeddingpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/embedding"
 	feedpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/feed"
 	interactionpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/interaction"
 	relationpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/relation"
@@ -70,6 +72,9 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	if err := gormDB.AutoMigrate(&exposurepersistence.ViewEventModel{}, &exposurepersistence.ExposureModel{}); err != nil {
 		return fmt.Errorf("migrate exposures: %w", err)
 	}
+	if err := gormDB.AutoMigrate(&embeddingpersistence.VideoEmbeddingModel{}); err != nil {
+		return fmt.Errorf("migrate video embeddings: %w", err)
+	}
 	if err := videopersistence.EnsureStats(gormDB); err != nil {
 		return fmt.Errorf("ensure video stats: %w", err)
 	}
@@ -82,6 +87,7 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	userRepository := userpersistence.New(gormDB)
 	userService := applicationuser.NewService(userRepository, jwtManager)
 	userHandler := userhandler.NewHandler(userService)
+	embeddingService := applicationembedding.NewService(embeddingpersistence.New(gormDB), nil)
 	videoRepository := videopersistence.New(gormDB)
 	exposureOptions := []applicationexposure.Option{}
 	videoOptions := []applicationvideo.Option{}
@@ -105,6 +111,9 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 		if err != nil {
 			log.Printf("rabbitmq disabled: %v", err)
 		} else {
+			if err := applicationembedding.NewVideoEmbeddingWorker(embeddingService, broker).Start(context.Background()); err != nil {
+				log.Printf("video embedding worker disabled: %v", err)
+			}
 			exposureOptions = append(exposureOptions, applicationexposure.WithViewEventPublisher(broker))
 			videoOptions = append(videoOptions, applicationvideo.WithPublishedEventPublisher(broker))
 			if feedCache != nil {
