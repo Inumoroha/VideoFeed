@@ -1,0 +1,37 @@
+{
+  "project": "videofeed-exposure-e2e-f4825c74",
+  "started_at": "2026-09-19T21:29:52+0800",
+  "checks": [
+    "TestExposurePostgresLive",
+    "TestExposureQueueLive",
+    "TestEmbeddingPostgresLive",
+    "TestEmbeddingQueueLive",
+    "isolated_schema_queue_exchange_connection_cleanup",
+    "actual_api_startup_registration_login_video_publish",
+    "video_publish_embedding_128d_hash_replay_update_and_poison_rejection",
+    "real_embedding_storage_failure_requeue_and_recovery",
+    "embedding_worker_operates_with_redis_unavailable",
+    "real_http_concurrency_33_exposures_four_event_types_jwt_identity",
+    "real_topic_durable_queue_binding_and_36_persistent_messages",
+    "http_400_401_404_500_no_side_effects_transaction_rollback",
+    "broker_disconnect_startup_failure_fallback_and_restart_durability",
+    "api_restart_restores_publish_and_final_40_rows",
+    "api_process_exit_releases_amqp_connections"
+  ],
+  "status": "passed",
+  "versions": {
+    "go": "go version go1.26.0 windows/amd64",
+    "docker": "29.6.2",
+    "postgres": "17.11",
+    "rabbitmq": "3.13.7",
+    "redis": "Redis server v=7.4.11 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=40ff01a501d8e4b6"
+  },
+  "counts": {
+    "http_view_events_saved": 40,
+    "exposure_count": 33,
+    "initial_messages": 36,
+    "expected_unpublished_during_failure": 2
+  },
+  "cleanup": "passed",
+  "finished_at": "2026-09-19T21:30:51+0800"
+}
