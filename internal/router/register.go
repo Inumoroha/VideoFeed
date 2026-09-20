@@ -139,7 +139,11 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	interactionService := applicationinteraction.NewService(interactionRepository, interactionOptions...)
 	interactionHandler := interactionhandler.NewHandler(interactionService)
 	relationRepository := relationpersistence.New(gormDB)
-	relationService := applicationrelation.NewService(relationRepository)
+	relationOptions := []applicationrelation.Option{}
+	if feedCache != nil {
+		relationOptions = append(relationOptions, applicationrelation.WithFollowFeedBackfiller(NewFollowFeedBackfiller(feedRepository, feedCache)))
+	}
+	relationService := applicationrelation.NewService(relationRepository, relationOptions...)
 	relationHandler := relationhandler.NewHandler(relationService)
 	uploadRoot, err := filepath.Abs("./uploads")
 	if err != nil {

@@ -10,3 +10,6 @@ var (
 	// ErrUpdateRelationFailed 表示更新关注关系失败。
 	ErrUpdateRelationFailed = errors.New("failed to update relation")
 )
+
+// ErrBackfillFollowFeedFailed 表示关注已保存但关注流回填失败。
+var ErrBackfillFollowFeedFailed = errors.New("failed to backfill follow feed")

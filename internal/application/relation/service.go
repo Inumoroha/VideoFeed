@@ -15,7 +15,8 @@ const defaultListLimit = 20
 
 // Service 编排用户关系用例：关注、取关、关注列表和粉丝列表。
 type Service struct {
-	repo domainrelation.Repository
+	repo       domainrelation.Repository
+	backfiller FollowFeedBackfiller
 }
 
 // listCursorPayload 保存关系分页游标的编码字段。
@@ -25,8 +26,12 @@ type listCursorPayload struct {
 }
 
 // NewService 创建使用指定关系仓储的应用服务。
-func NewService(repo domainrelation.Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo domainrelation.Repository, options ...Option) *Service {
+	service := &Service{repo: repo}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 // Follow 设置当前用户关注目标用户。
@@ -93,7 +98,7 @@ func (s *Service) ListFollowers(ctx context.Context, userID int64, cursor string
 	return listResult(items, limit), nil
 }
 
-// setFollow 统一处理关注和取关，active 表示目标关系状态。
+// setFollow 保存关注或取关状态；关注成功后同步回填，回填失败返回错误但不撤销已保存关系。
 func (s *Service) setFollow(ctx context.Context, userID int64, targetUserID int64, active bool, idempotencyKey string) (*FollowResult, error) {
 	if !s.ready() {
 		return nil, ErrRelationServiceNotInitialized
@@ -115,6 +120,11 @@ func (s *Service) setFollow(ctx context.Context, userID int64, targetUserID int6
 		return nil, ErrUpdateRelationFailed
 	}
 
+	if active && follow.Active() {
+		if err := s.backfillFollowFeed(ctx, userID, targetUserID); err != nil {
+			return nil, ErrBackfillFollowFeedFailed
+		}
+	}
 	return &FollowResult{
 		UserID:         follow.UserID,
 		TargetUserID:   follow.TargetUserID,
