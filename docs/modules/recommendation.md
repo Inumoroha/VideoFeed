@@ -16,7 +16,7 @@
 
 ## 数据和依赖
 
-实现复用 `videos`、`video_stat`、`video_embedding`、`video_view_events` 和 `exposures`，不新增配置、环境变量、Compose 服务、数据卷或 RabbitMQ 拓扑。PostgreSQL 表和唯一索引由现有 `router.Register` 负责迁移。
+实现复用 `videos`、`video_stat`、`video_embedding`、`video_view_events` 和 `exposures`，不新增配置、环境变量、Compose 服务、数据卷或 RabbitMQ 拓扑。PostgreSQL 表和唯一索引由 API 与 worker 共用的 `migration.AutoMigrate` 负责迁移。
 
 ## 前端入口与部署
 

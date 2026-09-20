@@ -50,7 +50,7 @@ docker compose up --build
 | Redis        | `127.0.0.1:6379`               |
 | RabbitMQ     | `127.0.0.1:5672` / `15672`     |
 
-Compose 会启动 `postgres`、`redis`、`rabbitmq`、`api`、`web` 五个服务。API 容器使用 `configs/config.docker.yaml`，数据库地址为 `postgres:5432`，Redis 地址为 `redis:6379`，RabbitMQ 地址为 `rabbitmq:5672`。
+Compose 会启动 `postgres`、`redis`、`rabbitmq`、`api`、`worker`、`web` 六个服务。API 容器使用 `configs/config.docker.yaml`，数据库地址为 `postgres:5432`，Redis 地址为 `redis:6379`，RabbitMQ 地址为 `rabbitmq:5672`。
 
 后台启动：
 
@@ -61,7 +61,7 @@ docker compose up -d --build
 查看日志：
 
 ```bash
-docker compose logs -f api web
+docker compose logs -f api worker web
 ```
 
 停止服务：
@@ -78,7 +78,7 @@ docker compose down -v
 
 ### 本地开发启动
 
-本地开发脚本会分别启动 Go API 和 Vite Web：
+本地开发脚本会分别启动 Go API、独立 worker 和 Vite Web；需要 PostgreSQL、Redis 和 RabbitMQ 已就绪：
 
 ```bash
 ./scripts/start.sh
@@ -198,3 +198,5 @@ docker compose down -v
 关注成功后可同步回填小作者近期作品，失败与重试语义见 [关系模块](docs/modules/relation.md)，迁移核对见 [c160f400](docs/migration-c160f400.md)。
 
 曝光决策接口 `POST /internal/exposure-decisions` 已实现：只读校验用户近七天曝光，保留输入顺序并去重，不预占曝光名额。接口和验证边界见 [f986e1d 迁移审计](docs/migration-f986e1d.md)。
+
+独立消费者部署：API 只处理请求和发布消息，互动落库、关注流分发与向量生成由 `go run ./cmd/worker` 执行。Compose 已加入 worker，Kubernetes 示例为根目录 `deploy.yaml`。运行方式、依赖与关闭边界见 [部署说明](docs/deployment.md)，逐项映射见 [1019a792 迁移审计](docs/migration-1019a792.md)。

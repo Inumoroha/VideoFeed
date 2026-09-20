@@ -353,3 +353,7 @@ flowchart TB
 ## 推荐模块
 
 `internal/handler/recommendation` → `internal/application/recommendation` → `internal/domain/recommendation`，仓储在 `internal/infrastructure/persistence/recommendation`。`Register` 注入推荐服务后再注入 Feed 缓存；`RecommendStrategy` 复用卡片组装。复用现有曝光和向量表，无新增配置、队列或数据库表。
+
+## 独立 worker 部署更新
+
+`cmd/server` → `router.Register` 只装配 HTTP 与消息发布；`cmd/worker` 订阅互动变更、视频分发、视频向量三个队列。二者共享 PostgreSQL 迁移入口 `internal/infrastructure/persistence/migration.AutoMigrate`，通过事务级咨询锁避免并发建表竞争，保留互动/关注幂等表及时间线索引。Redis 原子操作与 RabbitMQ 逐条确认、拒绝和重新入队语义不变。当前数据库为 PostgreSQL，部署以 [独立部署说明](deployment.md) 为准。

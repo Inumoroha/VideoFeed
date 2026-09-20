@@ -778,7 +778,7 @@ paths:
       description: >-
         scene 默认 timeline，支持 timeline、hot、following、recommend，参数会去除首尾空白并转为小写。
         following 和 recommend 必须提供有效的 Bearer 访问令牌；未提供或无效令牌按匿名处理并返回 401。
-        following 使用异步分发索引，发布后可能短暂延迟；索引缺失、不足或故障时回源数据库。
+        following 使用独立 worker 消费发布事件生成异步分发索引，发布后可能短暂延迟；索引缺失、不足或故障时回源数据库。
         recommend 按兴趣、热度和新鲜度排序，过滤近期曝光并页内打散作者；不自动记录曝光。推荐领域的非法游标或过长 request_id 经现有 Feed 错误映射返回 500，内部推荐接口则返回 400。
         其他场景可匿名访问。关注流按发布时间和视频 ID 倒序排列，合并收件箱与大作者拉取结果。
       security:
@@ -816,7 +816,7 @@ paths:
       description: >-
         scene 默认 timeline，支持 timeline、hot、following、recommend，参数会去除首尾空白并转为小写。
         following 和 recommend 必须提供有效的 Bearer 访问令牌；未提供或无效令牌按匿名处理并返回 401。
-        following 使用异步分发索引，发布后可能短暂延迟；索引缺失、不足或故障时回源数据库。
+        following 使用独立 worker 消费发布事件生成异步分发索引，发布后可能短暂延迟；索引缺失、不足或故障时回源数据库。
         recommend 按兴趣、热度和新鲜度排序，过滤近期曝光并页内打散作者；不自动记录曝光。推荐领域的非法游标或过长 request_id 经现有 Feed 错误映射返回 500，内部推荐接口则返回 400。
         其他场景可匿名访问。关注流按发布时间和视频 ID 倒序排列，合并收件箱与大作者拉取结果。
       security:
@@ -863,6 +863,7 @@ paths:
       tags:
         - Interaction
       summary: Set the current user's like for a video
+      description: 配置异步管道时，API 更新 Redis 并发布互动消息，由独立 worker 幂等落库；worker 暂停时消息积压。同步回退行为及响应格式保持不变。
       operationId: setVideoLike
       security:
         - bearerAuth: []
@@ -887,6 +888,7 @@ paths:
       tags:
         - Interaction
       summary: Clear the current user's like for a video
+      description: 配置异步管道时，API 更新 Redis 并发布互动消息，由独立 worker 幂等落库；worker 暂停时消息积压。同步回退行为及响应格式保持不变。
       operationId: clearVideoLike
       security:
         - bearerAuth: []
@@ -920,6 +922,7 @@ paths:
       tags:
         - Interaction
       summary: Set the current user's favorite for a video
+      description: 配置异步管道时，API 更新 Redis 并发布互动消息，由独立 worker 幂等落库；worker 暂停时消息积压。同步回退行为及响应格式保持不变。
       operationId: setVideoFavorite
       security:
         - bearerAuth: []
@@ -944,6 +947,7 @@ paths:
       tags:
         - Interaction
       summary: Clear the current user's favorite for a video
+      description: 配置异步管道时，API 更新 Redis 并发布互动消息，由独立 worker 幂等落库；worker 暂停时消息积压。同步回退行为及响应格式保持不变。
       operationId: clearVideoFavorite
       security:
         - bearerAuth: []

@@ -1,0 +1,10 @@
+{
+  "project": "videofeed-worker-signal-fbf52eaa",
+  "status": "passed",
+  "checks": [
+    "final_dockerfile_builds_api_and_worker",
+    "linux_worker_starts_with_real_dependencies",
+    "sigterm_exits_zero_with_shutdown_log"
+  ],
+  "cleanup": "passed"
+}

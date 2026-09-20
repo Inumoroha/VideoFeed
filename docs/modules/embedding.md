@@ -8,7 +8,7 @@
 - `internal/application/embedding`：NewService、GenerateForPublishedVideo、VideoEmbeddingWorker。
 - `internal/infrastructure/persistence/embedding`：GORM 模型与 PostgreSQL 仓储。
 - `internal/infrastructure/mq/rabbitmq.go`：独立队列声明、ConsumeVideoPublishedForEmbedding 和共享消费循环。
-- `internal/router/register.go`：迁移向量表，RabbitMQ 可用时启动消费者；不要求 Redis 可用。
+- `internal/infrastructure/persistence/migration`：API 和 worker 共用向量表迁移；`cmd/worker` 启动独立向量消费者。worker 要求配置 Redis 地址，但向量生成不调用 Redis。
 
 ## 数据与覆盖规则
 
