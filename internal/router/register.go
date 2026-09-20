@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	applicationexposure "github.com/inumoroha/video-feed/internal/application/exposure"
+	applicationrecommendation "github.com/inumoroha/video-feed/internal/application/recommendation"
 	exposurehandler "github.com/inumoroha/video-feed/internal/handler/exposure"
+	recommendationhandler "github.com/inumoroha/video-feed/internal/handler/recommendation"
 	exposurepersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/exposure"
+	recommendationpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/recommendation"
 	"log"
 	"path/filepath"
 
@@ -92,7 +95,8 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	exposureOptions := []applicationexposure.Option{}
 	videoOptions := []applicationvideo.Option{}
 	feedRepository := feedpersistence.New(gormDB)
-	feedOptions := []applicationfeed.Option{}
+	recommendationService := applicationrecommendation.New(recommendationpersistence.New(gormDB))
+	feedOptions := []applicationfeed.Option{applicationfeed.WithRecommender(recommendationService)}
 	var feedCache *feedcache.FeedCache
 	if cfg.Redis.Addr != "" {
 		redisClient := infraredis.NewRedisClient(cfg.Redis)
@@ -147,6 +151,7 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 
 	registerRoutes(g, userHandler, videoHandler, feedHandler, uploadHandler, jwtManager, interactionHandler, relationHandler, exposureHandler)
 	registerRelationRoutes(g, jwtManager, relationHandler)
+	registerRecommendationRoutes(g, recommendationhandler.New(recommendationService))
 
 	return nil
 }
@@ -225,4 +230,11 @@ func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandle
 
 	uploads := api.Group("/uploads", authMiddleware)
 	uploads.POST("", uploadHandler.Create)
+}
+
+// registerRecommendationRoutes 注册无需 JWT 的内部推荐候选与批量曝光接口。
+func registerRecommendationRoutes(g *gin.Engine, handler *recommendationhandler.Handler) {
+	internal := g.Group("/internal")
+	internal.POST("/recommendation-candidates", handler.ListCandidates)
+	internal.POST("/exposures", handler.SaveExposures)
 }
