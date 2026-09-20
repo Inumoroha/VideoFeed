@@ -26,6 +26,7 @@ const feedStatCacheTTL = 15 * time.Second
 
 // Service 通过 scene 策略注册表分发不同 Feed 场景。
 type Service struct {
+	repo         domainfeed.Repository
 	strategies   map[domainfeed.Scene]Strategy
 	defaultScene domainfeed.Scene
 }
@@ -52,6 +53,8 @@ func WithFeedCache(cache FeedCache) Option {
 			case *FollowingStrategy:
 				typed.cache = cache
 				typed.followingIndex, _ = cache.(FollowingIndexCache)
+			case *RecommendStrategy:
+				typed.cache = cache
 			}
 		}
 	}
@@ -63,6 +66,7 @@ func WithTimelineCache(cache FeedCache) Option { return WithFeedCache(cache) }
 // NewService 创建使用指定信息流仓储的应用服务。
 func NewService(repo domainfeed.Repository, options ...Option) *Service {
 	service := &Service{
+		repo:         repo,
 		strategies:   map[domainfeed.Scene]Strategy{},
 		defaultScene: domainfeed.DefaultScene,
 	}
