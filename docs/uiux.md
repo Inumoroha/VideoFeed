@@ -3,7 +3,9 @@
 > 版本：1.0
 > 日期：2026-08-31
 > 产品定位：电脑 Web 端短视频 Feed + 完整运营后台
-> 关联文档：`README.md`、`docs/product.md`、`docs/architecture.md`、`docs/modules/*.md`
+> 关联文档：`README.md`、`docs/product.md`、`docs/architecture.md`、`docs/engineering.md`、`docs/modules/*.md`
+
+> 本文包含完整产品的设计目标，并非已实现页面清单。当前功能状态见 [产品范围](product.md)，工程接入约定见 [工程规范](engineering.md)；消息、审核、后台运营、播放配置、治理和监控页面仍在规划中。
 
 ## 0. 快速摘要
 
