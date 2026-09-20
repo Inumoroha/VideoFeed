@@ -73,6 +73,8 @@ def main():
     evidence = {"project": project, "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "checks": [], "status": "running"}
     process = None
+    worker_process = None
+    worker_log = None
     log_file = None
     failure = None
     with tempfile.TemporaryDirectory(prefix="videofeed-exposure-") as work:
@@ -182,7 +184,34 @@ def main():
 
                 wait_until(healthy)
 
+            # stop_worker 停止本脚本的独立消费者进程并释放日志句柄。
+            def stop_worker():
+                nonlocal worker_process, worker_log
+                if worker_process is not None:
+                    worker_process.terminate()
+                    try:
+                        worker_process.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        worker_process.kill()
+                        worker_process.wait(timeout=5)
+                    worker_process = None
+                if worker_log is not None:
+                    worker_log.close()
+                    worker_log = None
+
+            # start_worker 启动当前代码构建的独立消费者，等待三类队列订阅完成。
+            def start_worker():
+                nonlocal worker_process, worker_log
+                worker_log = (work / "worker.log").open("a", encoding="utf-8")
+                worker_process = subprocess.Popen([str(worker_binary)], cwd=work, env=env, stdout=worker_log, stderr=subprocess.STDOUT)
+                wait_until(lambda: all(admin("/queues/%2F/" + name).get("consumers", 0) == 1
+                                       for name in ("exposure.e2e.actions", "exposure.e2e.videos", "exposure.e2e.embedding")))
+
             start_api()
+            if args.embedding:
+                worker_binary = work / ("worker.exe" if os.name == "nt" else "worker")
+                run(["go", "build", "-o", str(worker_binary), "./cmd/worker"], cwd=root)
+                start_worker()
             status, user = request(base + "/api/users", "POST", {"account": "exposure_e2e", "password": "Test-only-password-2026", "nickname": "曝光联调"})
             require(status == 201, "注册失败")
             status, session = request(base + "/api/sessions", "POST", {"account": "exposure_e2e", "password": "Test-only-password-2026"})
@@ -227,21 +256,24 @@ def main():
                 sql("ALTER TABLE video_embedding ADD CONSTRAINT embedding_retry_block CHECK (dimension < 0) NOT VALID")
                 retry_hash = hashlib.sha256("数据库恢复重试\n内容".encode()).hexdigest()
                 publish_video("数据库恢复重试", "内容")
-                wait_until(lambda: "failed to save video embedding" in (work / "api.log").read_text(encoding="utf-8") or "embedding_retry_block" in (work / "api.log").read_text(encoding="utf-8"))
+                wait_until(lambda: "failed to save video embedding" in (work / "worker.log").read_text(encoding="utf-8") or "embedding_retry_block" in (work / "worker.log").read_text(encoding="utf-8"))
                 require(embedding_row()["text_hash"] == changed_hash, "失败更新覆盖了旧记录")
                 sql("ALTER TABLE video_embedding DROP CONSTRAINT embedding_retry_block")
                 wait_until(lambda: embedding_row()["text_hash"] == retry_hash)
                 require(sql(f"SELECT count(*) FROM video_embedding WHERE video_id={video_id}") == "1", "重投生成重复行")
                 passed("real_embedding_storage_failure_requeue_and_recovery")
-                # 将 Redis 指向不可达地址后重启实际路由装配，向量 worker 仍应独立工作。
+                # 将独立 worker 的 Redis 指向不可达地址，向量队列仍应独立工作。
                 stop_api()
+                stop_worker()
                 env["REDIS_ADDR"] = "127.0.0.1:1"
                 start_api()
+                start_worker()
                 publish_video("Redis 不可达", "向量仍保存")
                 independent_hash = hashlib.sha256("Redis 不可达\n向量仍保存".encode()).hexdigest()
                 wait_until(lambda: embedding_row()["text_hash"] == independent_hash)
                 passed("embedding_worker_operates_with_redis_unavailable")
                 stop_api()
+                stop_worker()
                 env["REDIS_ADDR"] = f"127.0.0.1:{redis_port}"
                 start_api()
 
@@ -340,6 +372,11 @@ def main():
             evidence["error"] = str(error)
             failure = error
         finally:
+            if worker_process is not None:
+                worker_process.kill()
+                worker_process.wait(timeout=15)
+            if worker_log is not None:
+                worker_log.close()
             if process is not None:
                 process.kill()
                 process.wait(timeout=15)
