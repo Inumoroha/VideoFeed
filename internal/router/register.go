@@ -1,7 +1,6 @@
 package router
 
 import (
-	"context"
 	"fmt"
 	applicationexposure "github.com/inumoroha/video-feed/internal/application/exposure"
 	applicationrecommendation "github.com/inumoroha/video-feed/internal/application/recommendation"
@@ -13,7 +12,6 @@ import (
 	"path/filepath"
 
 	"github.com/gin-gonic/gin"
-	applicationembedding "github.com/inumoroha/video-feed/internal/application/embedding"
 	applicationfeed "github.com/inumoroha/video-feed/internal/application/feed"
 	applicationinteraction "github.com/inumoroha/video-feed/internal/application/interaction"
 	applicationrelation "github.com/inumoroha/video-feed/internal/application/relation"
@@ -31,9 +29,9 @@ import (
 	feedcache "github.com/inumoroha/video-feed/internal/infrastructure/cache/feed"
 	infraredis "github.com/inumoroha/video-feed/internal/infrastructure/cache/redis"
 	inframq "github.com/inumoroha/video-feed/internal/infrastructure/mq"
-	embeddingpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/embedding"
 	feedpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/feed"
 	interactionpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/interaction"
+	migration "github.com/inumoroha/video-feed/internal/infrastructure/persistence/migration"
 	relationpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/relation"
 	userpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/user"
 	videopersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/video"
@@ -42,7 +40,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Register 组装应用依赖、迁移业务数据表并注册全部应用路由。
+// Register 组装消息发布与请求处理依赖、迁移业务表并注册路由，不在 API 内启动消费者。
 func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	if g == nil {
 		return fmt.Errorf("gin engine is nil")
@@ -54,32 +52,8 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 		return fmt.Errorf("gorm database is nil")
 	}
 
-	if err := gormDB.AutoMigrate(&userpersistence.UserModel{}); err != nil {
-		return fmt.Errorf("migrate users: %w", err)
-	}
-	if err := gormDB.AutoMigrate(&videopersistence.VideoModel{}); err != nil {
-		return fmt.Errorf("migrate videos: %w", err)
-	}
-	if err := gormDB.AutoMigrate(&videopersistence.VideoStatModel{}); err != nil {
-		return fmt.Errorf("migrate video stats: %w", err)
-	}
-	if err := gormDB.AutoMigrate(&interactionpersistence.ActionModel{}, &interactionpersistence.ActionIdempotencyModel{}, &interactionpersistence.CommentModel{}); err != nil {
-		return fmt.Errorf("migrate interactions: %w", err)
-	}
-	if err := gormDB.AutoMigrate(&relationpersistence.FollowModel{}, &relationpersistence.RelationStatModel{}, &relationpersistence.FollowIdempotencyModel{}); err != nil {
-		return fmt.Errorf("migrate relations: %w", err)
-	}
-	if err := gormDB.AutoMigrate(&feedpersistence.InboxModel{}); err != nil {
-		return fmt.Errorf("migrate feed inbox: %w", err)
-	}
-	if err := gormDB.AutoMigrate(&exposurepersistence.ViewEventModel{}, &exposurepersistence.ExposureModel{}); err != nil {
-		return fmt.Errorf("migrate exposures: %w", err)
-	}
-	if err := gormDB.AutoMigrate(&embeddingpersistence.VideoEmbeddingModel{}); err != nil {
-		return fmt.Errorf("migrate video embeddings: %w", err)
-	}
-	if err := videopersistence.EnsureStats(gormDB); err != nil {
-		return fmt.Errorf("ensure video stats: %w", err)
+	if err := migration.AutoMigrate(gormDB); err != nil {
+		return err
 	}
 
 	jwtManager, err := authjwt.NewManager(cfg.Auth.JWT)
@@ -90,7 +64,6 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	userRepository := userpersistence.New(gormDB)
 	userService := applicationuser.NewService(userRepository, jwtManager)
 	userHandler := userhandler.NewHandler(userService)
-	embeddingService := applicationembedding.NewService(embeddingpersistence.New(gormDB), nil)
 	videoRepository := videopersistence.New(gormDB)
 	exposureOptions := []applicationexposure.Option{}
 	videoOptions := []applicationvideo.Option{}
@@ -115,20 +88,10 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 		if err != nil {
 			log.Printf("rabbitmq disabled: %v", err)
 		} else {
-			if err := applicationembedding.NewVideoEmbeddingWorker(embeddingService, broker).Start(context.Background()); err != nil {
-				log.Printf("video embedding worker disabled: %v", err)
-			}
 			exposureOptions = append(exposureOptions, applicationexposure.WithViewEventPublisher(broker))
 			videoOptions = append(videoOptions, applicationvideo.WithPublishedEventPublisher(broker))
 			if feedCache != nil {
 				interactionOptions = append(interactionOptions, applicationinteraction.WithAsyncActionPipeline(feedCache, broker))
-				if err := applicationinteraction.NewActionWorker(interactionRepository, broker).Start(context.Background()); err != nil {
-					log.Printf("interaction worker disabled: %v", err)
-				}
-				preheater := applicationvideo.NewFeedPreheater(feedRepository, feedCache)
-				if err := applicationvideo.NewFanoutWorker(feedRepository, broker, feedCache, preheater).Start(context.Background()); err != nil {
-					log.Printf("video fanout worker disabled: %v", err)
-				}
 			}
 		}
 	}
