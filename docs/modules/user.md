@@ -14,7 +14,7 @@
 
 当前没有刷新令牌接口、账号找回接口、管理员接口或用户列表接口。
 
-## 2. 分层关系
+### 分层关系
 
 用户请求的主要调用链如下：
 
@@ -36,7 +36,9 @@ Gin 路由
 - `domain/user` 保存用户实体及核心规则，包括输入校验、密码哈希、密码验证和资料更新规则。
 - `infrastructure/persistence/user` 实现领域层的 `Repository` 接口，负责领域对象和 GORM 模型之间的转换。
 
-## 3. 已实现接口
+## 2. 接口设计
+
+### 已实现接口
 
 | 方法 | 路径 | 鉴权 | 成功响应 | 可能的错误状态 |
 | --- | --- | --- | --- | --- |
@@ -49,7 +51,7 @@ Gin 路由
 
 注册和资料更新当前均不支持幂等键。接口路径、字段和响应以 `api/openapi.yaml` 为准。
 
-### 3.1 注册
+#### 注册
 
 请求体：
 
@@ -82,7 +84,7 @@ Gin 路由
 
 密码在领域层使用 `bcrypt` 哈希后保存，密码明文不会出现在响应中。已存在的账号返回 `409`，请求或领域校验失败返回 `400`。
 
-### 3.2 密码登录
+#### 密码登录
 
 请求体：
 
@@ -105,7 +107,7 @@ Gin 路由
 
 `expires_in_seconds` 由 JWT 配置中的 `access_ttl` 换算得到。当前配置默认访问令牌有效期为 `15m`。账号不存在或密码错误统一返回 `401`，避免暴露账号是否存在。
 
-### 3.3 退出登录
+#### 退出登录
 
 请求必须携带有效的访问令牌：
 
@@ -115,7 +117,7 @@ Authorization: Bearer <access-token>
 
 接口返回 `204 No Content`。当前 JWT 是无状态令牌，服务端不维护令牌黑名单；客户端需要删除本地访问令牌，令牌自然过期前不会被此接口单独撤销。
 
-### 3.4 获取当前用户资料
+#### 获取当前用户资料
 
 请求必须携带有效的访问令牌。接口通过令牌中的用户 ID 查询用户，并返回：
 
@@ -136,7 +138,7 @@ Authorization: Bearer <access-token>
 
 `work_count` 是当前用户已发布作品数。`following_count` 和 `follower_count` 来自关系统计快照；用户尚无任何关系记录时两项均为 `0`。
 
-### 3.5 获取公开用户资料
+#### 获取公开用户资料
 
 该接口无需鉴权，通过路径参数 `userId` 查询其他用户的公开资料：
 
@@ -160,7 +162,7 @@ GET /api/users/42
 
 用户不存在返回 `404`，非正整数或无法解析的 `userId` 返回 `400`。
 
-### 3.6 更新当前用户资料
+#### 更新当前用户资料
 
 请求体字段均为可选，但至少要提供一个非 `null` 字段：
 
@@ -179,26 +181,7 @@ GET /api/users/42
 
 成功时返回更新后的用户资料，格式与获取资料接口相同。
 
-## 4. 持久化模型
-
-GORM 模型 `UserModel` 映射到 PostgreSQL 的 `users` 表。字段和约束以模型标签为准：
-
-| 数据库列 | Go 类型 | GORM 约束 | 说明 |
-| --- | --- | --- | --- |
-| `id` | `int64` | 主键，自增 | 用户 ID |
-| `account` | `string` | `size:64`、非空、唯一索引 | 登录账号；代码不限制其为邮箱或手机号 |
-| `password` | `string` | `size:255`、非空 | bcrypt 密码哈希；领域层字段名为 `Password`，持久化模型字段名为 `PasswordHash` |
-| `nickname` | `string` | `size:128`、非空 | 用户昵称 |
-| `role` | `string` | `size:32`、非空 | 注册用户默认值为 `user` |
-| `avatar_url` | `string` | `size:255` | 头像地址，可为空 |
-| `bio` | `string` | `size:255` | 个人简介，可为空 |
-| `status` | `int` | 默认值为 `1` | 当前正常状态为 `1` |
-| `created_at` | `time.Time` | `autoCreateTime` | 创建时间 |
-| `updated_at` | `time.Time` | `autoUpdateTime` | 更新时间 |
-
-项目使用 PostgreSQL 和 GORM，因此本文不使用 MySQL 专用的 `TINYINT`、`DATETIME` 等类型描述。用户注册时由数据库唯一索引保证账号唯一，仓储层会将重复账号错误转换为领域错误。
-
-## 5. 错误响应
+### 错误响应
 
 接口错误使用统一结构：
 
@@ -221,7 +204,30 @@ GORM 模型 `UserModel` 映射到 PostgreSQL 的 `users` 表。字段和约束�
 
 认证中间件在缺少或错误的 `Authorization` 请求头时，也会返回 `401`，具体错误消息可能是 `authorization header is required`、`authorization format must be Bearer <token>` 或 `authorization scheme must be Bearer`。
 
-## 6. 相关代码和验证
+## 3. 数据表设计
+
+GORM 模型 `UserModel` 映射到 PostgreSQL 的 `users` 表。字段和约束以模型标签为准：
+
+| 数据库列 | Go 类型 | GORM 约束 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `int64` | 主键，自增 | 用户 ID |
+| `account` | `string` | `size:64`、非空、唯一索引 | 登录账号；代码不限制其为邮箱或手机号 |
+| `password` | `string` | `size:255`、非空 | bcrypt 密码哈希；领域层字段名为 `Password`，持久化模型字段名为 `PasswordHash` |
+| `nickname` | `string` | `size:128`、非空 | 用户昵称 |
+| `role` | `string` | `size:32`、非空 | 注册用户默认值为 `user` |
+| `avatar_url` | `string` | `size:255` | 头像地址，可为空 |
+| `bio` | `string` | `size:255` | 个人简介，可为空 |
+| `status` | `int` | 默认值为 `1` | 当前正常状态为 `1` |
+| `created_at` | `time.Time` | `autoCreateTime` | 创建时间 |
+| `updated_at` | `time.Time` | `autoUpdateTime` | 更新时间 |
+
+项目使用 PostgreSQL 和 GORM，因此本文不使用 MySQL 专用的 `TINYINT`、`DATETIME` 等类型描述。用户注册时由数据库唯一索引保证账号唯一，仓储层会将重复账号错误转换为领域错误。
+
+## 4. 业务规则
+
+账号唯一；密码使用 bcrypt 保存。公开资料不返回账号、角色、状态或密码。资料更新只允许昵称、头像、简介。注册与资料更新不支持幂等键；退出登录不撤销令牌。
+
+## 5. 测试建议
 
 - 路由注册：`internal/router/register.go`
 - HTTP 处理器：`internal/handler/user/`
@@ -237,3 +243,9 @@ go test ./...
 go vet ./...
 git diff --check
 ```
+
+测试位置：`internal/router/router_test.go`、`internal/application/user/service_test.go`、`internal/domain/user/user_test.go` 和 `internal/infrastructure/persistence/user/repository_test.go`。覆盖注册成功与重复账号、密码登录失败、JWT 保护、公开字段过滤、资料更新校验。
+
+## 6. 前端接入点
+
+`web/src/App.jsx` 的登录注册、当前用户资料及公开主页；退出登录清除客户端令牌。
