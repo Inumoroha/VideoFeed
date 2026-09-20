@@ -307,3 +307,11 @@ internal/router/
 | 查询关注列表 | 按最近关注时间倒序返回 |
 | 查询粉丝列表 | 按最近成为粉丝时间倒序返回 |
 | 游标翻页 | 多页结果稳定且无重复 |
+
+## 新关注作品回填
+
+启用 Redis 时，关注保存成功后对粉丝数不足 10000 的作者同步查询最近最多 100 条已发布且有发布时间的作品，按发布时间、视频编号倒序写入当前用户收件箱，容量为 1000，有效期 30 天。大作者不回填；取关不回填。两个现有关注入口 `PUT /api/relations/{targetUserId}`、`PUT /api/users/me/following/{targetUserId}` 都使用此逻辑。
+
+回填依赖通过 `internal/router/follow_backfill.go` 组合，数据库查询位于 `internal/infrastructure/persistence/feed/backfill.go`，应用逻辑位于 `internal/application/relation/backfill.go`。每条 Redis 写入沿用事务管道中的去重、裁剪和续期，跨作品不属于一个事务。任一步失败返回统一 500，已提交关注关系和此前缓存写入不会回滚；客户端可用原幂等键显式重试，关系计数沿用数据库幂等逻辑，缓存相同成员重复写入去重。没有自动重试或新增 MQ 消息。
+
+当前关注流传入全部有效关注作者并校验索引可见性，因此小作者收件箱不会被大作者名单误过滤，取关和删除视频仍受既有校验保护。索引不足、缺失或故障仍回源 PostgreSQL。无需新环境变量、数据表、Compose 服务、数据卷或连接；复用现有数据库与 Redis 配置。验证命令为 `go test ./...` 和配置 GCC 后的 `go test -race ./...`。

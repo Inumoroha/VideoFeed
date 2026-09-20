@@ -1,0 +1,22 @@
+{
+  "project": "videofeed-backfill-346dc869",
+  "started_at": "2026-09-20T19:31:55+0800",
+  "checks": [
+    "actual_api_health_registration_login",
+    "follow_backfills_exact_latest_100_published_videos_with_ttl",
+    "16_concurrent_idempotent_follow_retries_preserve_counts_and_inbox",
+    "following_get_post_pagination_authentication_and_user_isolation",
+    "unfollow_filters_stale_inbox_without_removing_cached_members",
+    "10000_follower_threshold_skips_backfill_via_relation_alias",
+    "redis_wrongtype_500_keeps_committed_follow_database_fallback_and_same_key_retry",
+    "real_redis_transaction_trims_inbox_to_1000"
+  ],
+  "status": "passed",
+  "versions": {
+    "postgres": "17.11",
+    "redis": "Redis server v=7.4.11 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=40ff01a501d8e4b6",
+    "go": "go version go1.26.0 windows/amd64"
+  },
+  "cleanup": "passed",
+  "finished_at": "2026-09-20T19:32:37+0800"
+}

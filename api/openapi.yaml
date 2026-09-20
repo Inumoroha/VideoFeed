@@ -6,6 +6,150 @@ servers:
   - url: /
     description: Current API server
 paths:
+  /api/relations/{targetUserId}:
+    put:
+      tags:
+      - Relation
+      summary: 关注用户并回填小作者作品
+      operationId: followRelationUser
+      description: 用户身份来自 JWT，无请求体。配置 Redis 后，在关注已保存且返回有效关注状态时，同步回填粉丝数不足 10000 的作者最近最多
+        100 条已发布作品，收件箱最多保留 1000 条。回填失败返回 500，已保存的关注和部分缓存写入不回滚；可使用原幂等键重试，重试仍执行回填。大作者或未配置
+        Redis 时不回填。
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: targetUserId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+        description: 目标用户 ID，不能等于当前用户。
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+        description: 去除首尾空白后最多 128 个 UTF-8 字节。复用现有关系幂等快照，回填会再次执行。
+      responses:
+        '200':
+          description: 关注成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FollowResult'
+              example:
+                user_id: 42
+                target_user_id: 77
+                status: 1
+                following: true
+                following_count: 3
+                follower_count: 4
+        '400':
+          description: 路径参数、自关注或幂等键校验失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid target user id
+        '401':
+          description: 缺少或无效访问令牌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid access token
+        '404':
+          description: 当前用户或目标用户不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: target user not found
+        '500':
+          description: 关系保存或回填失败；回填失败时已保存的关系不会撤销
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
+  /api/users/me/following/{targetUserId}:
+    put:
+      tags:
+      - Relation
+      summary: 关注用户并回填小作者作品
+      operationId: followUser
+      description: 用户身份来自 JWT，无请求体。配置 Redis 后，在关注已保存且返回有效关注状态时，同步回填粉丝数不足 10000 的作者最近最多
+        100 条已发布作品，收件箱最多保留 1000 条。回填失败返回 500，已保存的关注和部分缓存写入不回滚；可使用原幂等键重试，重试仍执行回填。大作者或未配置
+        Redis 时不回填。
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: targetUserId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+        description: 目标用户 ID，不能等于当前用户。
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+        description: 去除首尾空白后最多 128 个 UTF-8 字节。复用现有关系幂等快照，回填会再次执行。
+      responses:
+        '200':
+          description: 关注成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FollowResult'
+              example:
+                user_id: 42
+                target_user_id: 77
+                status: 1
+                following: true
+                following_count: 3
+                follower_count: 4
+        '400':
+          description: 路径参数、自关注或幂等键校验失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid target user id
+        '401':
+          description: 缺少或无效访问令牌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid access token
+        '404':
+          description: 当前用户或目标用户不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: target user not found
+        '500':
+          description: 关系保存或回填失败；回填失败时已保存的关系不会撤销
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
   /internal/recommendation-candidates:
     post:
       tags:
@@ -969,6 +1113,31 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    FollowResult:
+      type: object
+      required:
+      - user_id
+      - target_user_id
+      - status
+      - following
+      - following_count
+      - follower_count
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        target_user_id:
+          type: integer
+          format: int64
+        status:
+          type: integer
+          description: 1 为关注，2 为已取消；幂等重放返回首次结果。
+        following:
+          type: boolean
+        following_count:
+          type: integer
+        follower_count:
+          type: integer
     RecommendationCandidateRequest:
       type: object
       required:
