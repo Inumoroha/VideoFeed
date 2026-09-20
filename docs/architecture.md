@@ -347,5 +347,9 @@ flowchart TB
 - 业务接口统一挂载在 `/api/*`；互动接口为 `/api/interactions/*` 与 `/api/comments`。静态文件通过 `/uploads/*` 访问，健康检查使用 `/health`。
 - 数据持久化使用 MySQL，GORM 自动迁移 `users`、`videos`、`video_stat`、`interaction_action`、`interaction_action_idempotency` 与 `interaction_comment` 表。
 - Feed 当前采用 Timeline 策略，按 `published_at DESC, id DESC` 排序，并通过 Base64 游标分页。
-- 推荐、审核、消息、治理和监控模块作为演进边界保留；已落地的互动模块后续可接入异步事件和独立服务。
+- 审核、消息、治理和监控模块作为演进边界保留；已落地的互动模块后续可接入异步事件和独立服务。
 
+
+## 推荐模块
+
+`internal/handler/recommendation` → `internal/application/recommendation` → `internal/domain/recommendation`，仓储在 `internal/infrastructure/persistence/recommendation`。`Register` 注入推荐服务后再注入 Feed 缓存；`RecommendStrategy` 复用卡片组装。复用现有曝光和向量表，无新增配置、队列或数据库表。

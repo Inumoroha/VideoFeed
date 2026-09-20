@@ -8,21 +8,21 @@
 
 | 方法 | 接口路径 | 作用 | 鉴权 | 幂等键 |
 | --- | --- | --- | --- | --- |
-| GET | `/api/feed-items` | 获取按 scene 排序的视频流 | timeline/hot 可匿名，following 必须登录 | - |
+| GET | `/api/feed-items` | 获取按 scene 排序的视频流 | timeline/hot 可匿名，following/recommend 必须登录 | - |
 
-| POST | `/api/feed/query` | 通过 JSON 请求体查询 scene、cursor、limit、context | timeline/hot 可匿名，following 必须登录 | - |
+| POST | `/api/feed/query` | 通过 JSON 请求体查询 scene、cursor、limit、context | timeline/hot 可匿名，following/recommend 必须登录 | - |
 
 | POST | `/api/video-view-events` | 上报曝光和观看事件 | 必须登录 | 无；request_id 不去重 |
 
 ### 2.1 Feed Items API
 
-`GET /api/feed-items` 支持 `cursor`、`limit` 和 `scene` 查询参数。`limit` 默认 10，最大 100，非正数返回 400；`scene` 默认 `timeline`，可选 `timeline`、`hot`、`following`。
+`GET /api/feed-items` 支持 `cursor`、`limit` 和 `scene` 查询参数。`limit` 默认 10，最大 100，非正数返回 400；`scene` 默认 `timeline`，可选 `timeline`、`hot`、`following`、`recommend`。
 
 | 参数 | 位置 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- | --- |
 | `cursor` | query | string | 否 | - | 上一页返回的游标 |
 | `limit` | query | int | 否 | 10 | 返回数量，最大 100 |
-| `scene` | query | string | 否 | `timeline` | Feed 场景：`timeline`、`hot`、`following` |
+| `scene` | query | string | 否 | `timeline` | Feed 场景：`timeline`、`hot`、`following`、`recommend` |
 
 响应包含 `scene`、`items`、`next_cursor` 和 `has_more`。游标使用 URL 安全的 Base64 编码；时间线和热榜无下一页时 `next_cursor` 为空字符串；关注流非空页始终返回游标，使用 `has_more` 判断是否继续，非法游标返回 400。
 
@@ -132,7 +132,7 @@ feed:timeline:v1:limit:{limit}:cursor:{sha1(cursor)}
 
 落库成功后构造 `ViewEventRecordedEvent`，包含 event_id、view_event_id、user_id、video_id、scene、可选 request_id、event_type、watch_ms、completed、UTC recorded_at 和 occurred_at，以及可选 exposure_count。随机事件 ID 生成失败时沿用纳秒时间戳回退。
 
-RabbitMQ 使用持久化 topic 交换机、持久化队列和持久化 JSON 消息，消息属性保留事件编号和发送时间。消费接口逐条确认成功消息，非法 JSON 拒绝且不重入队，处理失败拒绝并重入队；消费取消或连接关闭会结束消费。未加入发布确认、发件箱、自动重连或发布重试；发布失败不回滚已提交行为，初始化失败时记录日志并禁用发布器。此次仅提供画像消费接口，没有启动画像计算 worker，也没有实现推荐去重策略。
+RabbitMQ 使用持久化 topic 交换机、持久化队列和持久化 JSON 消息，消息属性保留事件编号和发送时间。消费接口逐条确认成功消息，非法 JSON 拒绝且不重入队，处理失败拒绝并重入队；消费取消或连接关闭会结束消费。未加入发布确认、发件箱、自动重连或发布重试；发布失败不回滚已提交行为，初始化失败时记录日志并禁用发布器。此次仅提供画像消费接口，没有启动画像计算 worker，推荐查询现通过 PostgreSQL 过滤近七天曝光，详见推荐模块。
 
 | YAML 配置项（rabbitmq 下） | 环境变量 | 默认值 |
 | --- | --- | --- |
@@ -145,3 +145,7 @@ RabbitMQ 使用持久化 topic 交换机、持久化队列和持久化 JSON 消�
 在仓库根目录运行 `go test ./...`、`go vet ./...`、`git diff --check` 和 `docker compose config --quiet`。可选真实服务测试使用 `VIDEOFEED_TEST_POSTGRES_URL` 与 `VIDEOFEED_TEST_AMQP_URL` 指向专用测试服务；测试使用独立数据库 schema 或消息拓扑并清理，未配置时跳过。验证结果与限制见 [迁移审计](../migration-fa476283.md)。
 
 真实服务验证可运行 `python scripts/verify_exposure_live.py`：脚本自动启动并清理独立 Docker 服务，测试数据库并发与消息消费后，再验证实际 API 的注册登录、曝光上报和故障回退。已执行结果见 [曝光真实服务验证](../exposure-live-verification.md)。
+
+## 推荐场景
+
+`scene=recommend` 由 `internal/application/feed/recommendation.go` 处理，保留现有 `/api/feed/query` 路径。候选按推荐服务顺序组装，只复用公共卡片和计数缓存，缓存失败回源；不缓存个性化页。`context.request_id` 传给推荐服务。未登录返回 401；推荐领域非法游标或过长请求标识沿用源提交的 Feed 映射返回 500，内部候选接口对此返回 400。详见 [推荐模块](recommendation.md)。

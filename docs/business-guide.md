@@ -165,7 +165,7 @@ JWT 长这样（三段，用点分隔）：`头部.内容.签名`
 
 ### 3.5 一个聪明的设计：Feed 接口是"可选登录"
 
-刷视频流不需要登录（游客也能看），但如果登录了，后端就知道你是谁，为将来做"关注的人的动态""个性化推荐"留了口子。
+时间线和热榜允许匿名访问；关注流和推荐流要求登录，并使用 JWT 中的用户身份。
 
 实现方式：`NewOptionalJWTAuth`（`internal/middleware/jwt_auth.go:73-99`）—— 没带通行证就放过去，带了就解析出身份。**注意它和"强制登录"的区别**：强制版没带通行证直接 401 拦掉；可选版一律放行。
 
@@ -247,9 +247,9 @@ JWT 长这样（三段，用点分隔）：`头部.内容.签名`
 
 好处：将来要加"推荐流"，只需要新写一个策略并在启动时注册一下，**已经写好的代码一行都不用改**。
 
-**但是有个真实的坑（面试可能被问到）**：场景常量里定义了 4 个 —— `timeline`、`hot`、`recommend`、`following`（`domain/feed/feed.go:13-17`），但**只注册了 `timeline` 和 `hot` 两个策略**。`recommend` 和 `following` 从头到尾没有任何代码使用，是**死常量**。
+当前已注册 timeline、hot、following 和 recommend 四个策略；推荐流复用现有查询入口和卡片组装。
 
-也就是说，你传 `scene=recommend` 会直接拿到"不支持的场景"错误。**而 OpenAPI 文档（`api/openapi.yaml:1015`）偏偏把 `recommend` 和 `following` 列为合法取值** —— 照着文档调用必定失败。这是文档骗人的一处，详见第 8 章。
+推荐排序、曝光过滤和边界说明见 [推荐模块](modules/recommendation.md)。
 
 ---
 
@@ -611,7 +611,6 @@ COALESCE(vs.like_count,0)*3 + COALESCE(vs.comment_count,0)*5 + COALESCE(vs.favor
 | **`docs/standard.md` 规定的错误处理写法和实际代码不符** | `standard.md:299` 要求判断 `mysql.MySQLError` 的 1062；但三处 `isDuplicateKeyError` 各写各的：`persistence/video/repository.go:337` 和 `persistence/interaction/repository.go:618` 只判 `gorm.ErrDuplicatedKey`，`persistence/relation/repository.go:409-415` 多判了一个 PostgreSQL 的 `23505` | 中。同一件事三种写法，规范文档还是第四种 |
 | **架构文档说"关注关系"还没实现，其实已经实现了** | `docs/architecture.md:325` 把关注画成虚线的未来能力；实际 `internal/domain/relation/` 完整实现了关注/取关/粉丝列表，并自动建了 3 张表（`register.go:57-59`）。ER 图（第 217 行起）里也完全没有这几张表 | 中。文档落后于代码 |
 | **OpenAPI 缺失关注模块的全部 8 个接口** | `api/openapi.yaml` 里完全没有 `/api/relations/*` 和 `/api/users/me/following|followers`。而项目自己的 `AGENTS.md` 明确规定"实现接口后必须同步补充 OpenAPI" | 中。违反了项目自己的规范 |
-| **OpenAPI 把 `recommend`、`following` 列为合法场景值，实际会报错** | `api/openapi.yaml:1015` 的 enum 有 4 个值；后端只注册了 2 个策略（`application/feed/service.go:37-38`），另两个必然返回 `ErrUnsupportedScene` | 中。"按文档调用必定失败" |
 
 ### 8.3 半成品和死代码（面试可能被追问）
 
@@ -620,7 +619,6 @@ COALESCE(vs.like_count,0)*3 + COALESCE(vs.comment_count,0)*5 + COALESCE(vs.favor
 | **refresh token 只写了一半** | 有签发函数、有类型常量、有配置、有单测，但无任何业务调用，无刷新接口（详见 3.4） | 承认是已知缺口，说出正确做法 |
 | **退出登录服务端什么都没做** | `handler/user/handler.go:100-102` 只有一行返回 204 | 主动说明这是无状态 JWT 的固有难题 + 两种补法（详见 3.4） |
 | **Redis 只有配置，没有代码** | `RedisConfig` 结构体、校验函数、单测都在（`config/config.go:51`、`validate.go:80`），但全项目没有一行使用 Redis 的代码，`go.mod` 里**连 Redis 客户端依赖都没有** | 说明是给未来缓存预留的。**但要指出一个真实毛病**：这个配置在启动时是**必填**的（`validate.go:81-83` 地址为空就报错），一个从不使用 Redis 的系统却强制要求填 Redis 地址，属于配置和实现脱节 |
-| **`recommend`、`following` 是死常量** | 定义在 `domain/feed/feed.go:15-16`，全项目零引用 | 说明是预留的场景 |
 | **`GetFeed` 里有一句永远不成立的判断** | `application/feed/service.go:60-61` 判断 `req.Scene == ""`，但上一行的 `NormalizeScene` 在空值时已经返回默认场景、**不可能返回空串** | 死代码，可以删 |
 | **评论列表最后一页仍会返回下一页书签** | `application/interaction/service.go:122-128` 只判断了"有没有数据"（`len(items) > 0`），没判断"还有没有下一页"（`hasMore`）。而 Feed 的同类逻辑是判断过的（`feed/service.go:175-176`）。`docs/day5.md:16` 还声称修过这个"没有下一页仍返回 next_cursor"的问题 —— 只修了 Feed，漏了评论 | 小毛病。后果是前端会多发一次空请求，然后自己停下来，不会出错 |
 

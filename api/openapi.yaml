@@ -6,6 +6,124 @@ servers:
   - url: /
     description: Current API server
 paths:
+  /internal/recommendation-candidates:
+    post:
+      tags:
+      - Recommendation
+      summary: 查询推荐候选
+      operationId: listRecommendationCandidates
+      description: 按热度召回已发布且近七天未曝光的视频，以近三十天最多二百条正向观看事件构建画像；兴趣、热度、新鲜度排序并在页内打散作者，无画像时使用冷启动权重。
+        接口不使用 JWT，用户来自请求体。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecommendationCandidateRequest'
+            example:
+              user_id: 42
+              scene: recommend
+              request_id: req-demo
+              limit: 10
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationCandidateResponse'
+              example:
+                user_id: 42
+                scene: recommend
+                request_id: req-demo
+                candidates:
+                - video_id: 1001
+                  author_id: 10
+                  rank_score: 0.8
+                  similarity: 1
+                  hot_score: 0
+                  freshness_score: 1
+                  reason: interest_match
+                  published_at: '2026-05-19T12:00:00Z'
+                next_cursor: eyJyYW5rX3Njb3JlIjowLjgsInB1Ymxpc2hlZF9hdCI6IjIwMjYtMDUtMTlUMTI6MDA6MDBaIiwidmlkZW9faWQiOjEwMDF9
+                has_more: false
+        '400':
+          description: JSON 绑定或领域参数校验失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid request
+        '500':
+          description: 数据库或服务处理失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
+  /internal/exposures:
+    post:
+      tags:
+      - Recommendation
+      summary: 批量记录推荐曝光
+      operationId: saveRecommendationExposures
+      description: 同一批次按视频去重；事务中追加 exposed 流水并按用户和视频原子累加曝光；跨请求包括相同 request_id 均继续累加，任何写入失败回滚整个批次。不发布
+        RabbitMQ 消息。 接口不使用 JWT，用户来自请求体。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecommendationExposuresRequest'
+            example:
+              user_id: 42
+              scene: recommend
+              request_id: req-demo
+              video_ids:
+              - 1001
+      responses:
+        '201':
+          description: 曝光已保存
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationExposuresResponse'
+              example:
+                exposures:
+                - user_id: 42
+                  video_id: 1001
+                  first_exposed_at: '2026-05-19T12:00:00Z'
+                  last_exposed_at: '2026-05-19T12:00:00Z'
+                  exposure_count: 1
+                  last_scene: recommend
+        '400':
+          description: JSON 绑定或领域参数校验失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid request
+        '500':
+          description: 数据库或服务处理失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
+        '404':
+          description: 视频不存在或未发布；整个批次回滚
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: video not found
   /api/video-view-events:
     post:
       tags:
@@ -453,12 +571,13 @@ paths:
     get:
       tags:
         - Feed
-      summary: 获取时间线、热榜或关注流
+      summary: 获取时间线、热榜、关注或推荐流
       operationId: getTimelineFeed
       description: >-
-        scene 默认 timeline，支持 timeline、hot、following，参数会去除首尾空白并转为小写。
-        following 必须提供有效的 Bearer 访问令牌；未提供或无效令牌按匿名处理并返回 401。
+        scene 默认 timeline，支持 timeline、hot、following、recommend，参数会去除首尾空白并转为小写。
+        following 和 recommend 必须提供有效的 Bearer 访问令牌；未提供或无效令牌按匿名处理并返回 401。
         following 使用异步分发索引，发布后可能短暂延迟；索引缺失、不足或故障时回源数据库。
+        recommend 按兴趣、热度和新鲜度排序，过滤近期曝光并页内打散作者；不自动记录曝光。推荐领域的非法游标或过长 request_id 经现有 Feed 错误映射返回 500，内部推荐接口则返回 400。
         其他场景可匿名访问。关注流按发布时间和视频 ID 倒序排列，合并收件箱与大作者拉取结果。
       security:
         - {}
@@ -477,7 +596,7 @@ paths:
         '400':
           $ref: '#/components/responses/InvalidFeedRequest'
         '401':
-          description: 关注流缺少有效登录身份
+          description: 关注流或推荐流缺少有效登录身份
           content:
             application/json:
               schema:
@@ -493,9 +612,10 @@ paths:
       summary: Query a feed scene with contextual parameters
       operationId: queryFeed
       description: >-
-        scene 默认 timeline，支持 timeline、hot、following，参数会去除首尾空白并转为小写。
-        following 必须提供有效的 Bearer 访问令牌；未提供或无效令牌按匿名处理并返回 401。
+        scene 默认 timeline，支持 timeline、hot、following、recommend，参数会去除首尾空白并转为小写。
+        following 和 recommend 必须提供有效的 Bearer 访问令牌；未提供或无效令牌按匿名处理并返回 401。
         following 使用异步分发索引，发布后可能短暂延迟；索引缺失、不足或故障时回源数据库。
+        recommend 按兴趣、热度和新鲜度排序，过滤近期曝光并页内打散作者；不自动记录曝光。推荐领域的非法游标或过长 request_id 经现有 Feed 错误映射返回 500，内部推荐接口则返回 400。
         其他场景可匿名访问。关注流按发布时间和视频 ID 倒序排列，合并收件箱与大作者拉取结果。
       security:
         - {}
@@ -519,7 +639,7 @@ paths:
         '400':
           $ref: '#/components/responses/InvalidFeedRequest'
         '401':
-          description: 关注流缺少有效登录身份
+          description: 关注流或推荐流缺少有效登录身份
           content:
             application/json:
               schema:
@@ -824,7 +944,7 @@ components:
       schema:
         type: string
         default: timeline
-      description: 支持 timeline、hot、following；空值使用 timeline；忽略大小写及首尾空白，其他值返回 400；following 要求有效访问令牌。
+      description: 支持 timeline、hot、following、recommend；空值使用 timeline；忽略大小写及首尾空白，其他值返回 400；following 和 recommend 要求有效访问令牌。
       example: following
     FeedLimit:
       name: limit
@@ -841,7 +961,7 @@ components:
       required: false
       schema:
         type: string
-      description: URL-safe Base64 cursor returned by the previous feed page. Timeline and following cursors contain publication time and video ID; hot cursors depend on the active ranking strategy. Invalid cursors return 400.
+      description: URL-safe Base64 cursor returned by the previous feed page. Timeline and following cursors contain publication time and video ID; hot cursors depend on the active ranking strategy. Invalid timeline/hot/following cursors return 400; invalid recommendation cursors return 500 through the existing Feed error mapping.
 
   securitySchemes:
     bearerAuth:
@@ -849,6 +969,114 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    RecommendationCandidateRequest:
+      type: object
+      required:
+      - user_id
+      - scene
+      properties:
+        user_id:
+          type: integer
+          format: int64
+          minimum: 1
+        scene:
+          type: string
+          description: 去除首尾空白并转小写后必须非空，UTF-8 字节长度最多 32；不限于 Feed 场景。
+        request_id: &id002
+          type: string
+          description: 去除首尾空白后 UTF-8 字节长度最多 64；用于关联请求，不是幂等键。
+        cursor:
+          type: string
+          description: 上一页 next_cursor；空值读取首页，接受 URL 安全无填充或标准 Base64。
+        limit:
+          type: integer
+          nullable: true
+          description: 省略、null 或非正数使用 10，大于 100 截为 100。
+          default: 10
+    RecommendationCandidate:
+      type: object
+      required:
+      - video_id
+      - author_id
+      - rank_score
+      - similarity
+      - hot_score
+      - freshness_score
+      - reason
+      - published_at
+      properties:
+        video_id: &id001
+          type: integer
+          format: int64
+        author_id: *id001
+        rank_score:
+          type: number
+          format: double
+        similarity:
+          type: number
+          format: double
+        hot_score:
+          type: integer
+        freshness_score:
+          type: number
+          format: double
+        reason:
+          type: string
+          enum:
+          - interest_match
+          - hot
+          - fresh
+        published_at:
+          type: string
+          format: date-time
+    RecommendationCandidateResponse:
+      type: object
+      required:
+      - user_id
+      - scene
+      - candidates
+      - next_cursor
+      - has_more
+      properties:
+        user_id: *id001
+        scene:
+          type: string
+        request_id:
+          type: string
+        candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecommendationCandidate'
+        next_cursor:
+          type: string
+        has_more:
+          type: boolean
+    RecommendationExposuresRequest:
+      type: object
+      description: video_ids 缺省、null 或空数组时直接成功，返回空 exposures，此时不校验 user_id、scene 和 request_id；非空数组时
+        user_id 必须大于零，scene 必須规范化后非空且最多 32 字节，request_id 最多 64 字节。
+      properties:
+        user_id: *id001
+        scene:
+          type: string
+        request_id: *id002
+        video_ids:
+          type: array
+          nullable: true
+          items:
+            type: integer
+            format: int64
+            minimum: 1
+          description: 批内按视频去重，保留首次出现顺序；无批次大小上限。
+    RecommendationExposuresResponse:
+      type: object
+      required:
+      - exposures
+      properties:
+        exposures:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExposureResponse'
     CreateViewEventRequest:
       type: object
       required:
@@ -1232,7 +1460,7 @@ components:
       properties:
         scene:
           type: string
-          description: 支持 timeline、hot、following；省略或空值使用 timeline，忽略大小写及首尾空白；following 要求有效访问令牌。
+          description: 支持 timeline、hot、following、recommend；省略或空值使用 timeline，忽略大小写及首尾空白；following 和 recommend 要求有效访问令牌。
         cursor:
           type: string
         limit:
