@@ -208,6 +208,64 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 error: internal server error
+  /internal/exposure-decisions:
+    post:
+      tags:
+      - Recommendation
+      summary: 查询视频曝光决策
+      operationId: decideRecommendationExposures
+      description: 只读查询指定用户近七天（含边界）的曝光；按视频首次出现顺序去重。scene 和 request_id 不参与曝光过滤。无记录的视频（包括不存在的视频）允许曝光，不检查视频发布状态。不写入曝光或预占名额，并发查询可同时允许同一视频。无自动重试或失败放行。接口不使用
+        JWT，用户来自请求体。时间窗口沿用推荐服务默认按分钟截断的时钟。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecommendationExposureDecisionsRequest'
+            example:
+              user_id: 42
+              scene: recommend
+              request_id: req-demo
+              video_ids:
+              - 1001
+              - 1002
+              - 1002
+      responses:
+        '200':
+          description: '返回去重后的有序曝光决策；空列表返回 decisions: []'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationExposureDecisionsResponse'
+              example:
+                user_id: 42
+                scene: recommend
+                request_id: req-demo
+                decisions:
+                - video_id: 1001
+                  allowed: false
+                  reason: recently_exposed
+                  last_exposed_at: '2026-09-20T12:00:00Z'
+                - video_id: 1002
+                  allowed: true
+                  reason: fresh
+        '400':
+          description: JSON 绑定或参数校验失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid request
+        '500':
+          description: 曝光读取失败，不返回放行决策
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
   /internal/exposures:
     post:
       tags:
@@ -1113,6 +1171,65 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    RecommendationExposureDecisionsRequest:
+      type: object
+      required:
+      - user_id
+      - scene
+      description: video_ids 缺省、null 或空数组时仍校验 user_id、scene、request_id；合法时返回空 decisions 且不访问数据库。无视频数量上限。
+      properties:
+        user_id: &exposureDecisionID
+          type: integer
+          format: int64
+          minimum: 1
+        scene:
+          type: string
+          description: 去除两端空白并转小写后必须非空，按 UTF-8 字节最多 32 字节；不限制场景枚举。
+        request_id:
+          type: string
+          description: 可选，去除两端空白后最多 64 个 UTF-8 字节，不用于幂等或曝光过滤。
+        video_ids:
+          type: array
+          nullable: true
+          items: *exposureDecisionID
+          description: 每个视频必须大于零，重复项按首次顺序去重。
+    RecommendationExposureDecisionsResponse:
+      type: object
+      required:
+      - user_id
+      - scene
+      - decisions
+      properties:
+        user_id: *exposureDecisionID
+        scene:
+          type: string
+          description: 规范化后的场景。
+        request_id:
+          type: string
+          description: 去除空白后的请求标识，为空时省略。
+        decisions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecommendationExposureDecision'
+    RecommendationExposureDecision:
+      type: object
+      required:
+      - video_id
+      - allowed
+      - reason
+      properties:
+        video_id: *exposureDecisionID
+        allowed:
+          type: boolean
+        reason:
+          type: string
+          enum:
+          - fresh
+          - recently_exposed
+        last_exposed_at:
+          type: string
+          format: date-time
+          description: 仅近期曝光命中时返回；允许曝光时省略。
     FollowResult:
       type: object
       required:

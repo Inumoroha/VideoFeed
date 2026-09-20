@@ -142,7 +142,7 @@ docker compose down -v
 | ✅   | 上传     | POST   | `/api/uploads`                                 | 上传媒体文件                 |
 | ✅   | Feed     | GET    | `/api/feed-items`                              | 刷新 Feed                    |
 | ✅   | Feed     | POST   | `/api/feed/query`                              | 通过请求体查询 Feed 场景      |
-| [ ]  | 推荐     | POST   | `/internal/exposure-decisions`                 | 曝光去重校验                 |
+| ✅   | 推荐     | POST   | `/internal/exposure-decisions`                 | 曝光去重校验                 |
 | ✅   | 互动     | PUT    | `/api/videos/{videoId}/favorite`               | 收藏                         |
 | ✅   | 互动     | DELETE | `/api/videos/{videoId}/favorite`               | 取消收藏                     |
 | ✅   | 互动     | DELETE | `/api/comments/{commentId}`                    | 删除评论                     |
@@ -196,3 +196,5 @@ docker compose down -v
 后端已支持 `GET /api/feed-items?scene=recommend` 和 `POST /api/feed/query` 的推荐场景，必须携带访问令牌。内部候选及曝光接口不使用 JWT。实现与边界见 [推荐模块](docs/modules/recommendation.md)，逐文件审计见 [迁移记录](docs/migration-cafc119.md)。前端 `/recommend` 已接入推荐流；登录后默认进入推荐页，支持游标续页和曝光上报。前端验证使用 `npm --prefix web test` 与 `npm --prefix web run build`，迁移审计见 [2df157c](docs/migration-2df157c.md)。
 
 关注成功后可同步回填小作者近期作品，失败与重试语义见 [关系模块](docs/modules/relation.md)，迁移核对见 [c160f400](docs/migration-c160f400.md)。
+
+曝光决策接口 `POST /internal/exposure-decisions` 已实现：只读校验用户近七天曝光，保留输入顺序并去重，不预占曝光名额。接口和验证边界见 [f986e1d 迁移审计](docs/migration-f986e1d.md)。
