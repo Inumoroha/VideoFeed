@@ -5,6 +5,7 @@ const USER_KEY = "videofeed.user";
 const PUBLIC_PROFILE_KEY = "videofeed.publicProfiles";
 const FEED_TRANSITION_MS = 320;
 const FEED_SCENES = [
+    { key: "recommend", label: "推荐流", route: "/recommend", icon: "auto_awesome" },
     {
         key: "timeline",
         label: "最新视频",
@@ -47,6 +48,7 @@ const emptyProfile = {
     status: 0,
 };
 
+// App 管理登录会话和路由，已登录用户从首页进入推荐流。
 function App() {
     const [route, setRoute] = useState(() =>
         normalizeRoute(window.location.pathname),
@@ -65,7 +67,7 @@ function App() {
 
     useEffect(() => {
         if (route === "/") {
-            navigate("/timeline", setRoute);
+            navigate(token ? "/recommend" : "/timeline", setRoute);
         }
         if ((route === "/profile" || route === "/me") && !(token && user)) {
             navigate("/timeline", setRoute);
@@ -174,6 +176,7 @@ function App() {
     );
 }
 
+// LoginPage 处理登录和注册，登录成功获取用户资料并跳转推荐流。
 function LoginPage({ session, onNavigate }) {
     const [mode, setMode] = useState("login");
     const [form, setForm] = useState({
@@ -184,6 +187,7 @@ function LoginPage({ session, onNavigate }) {
     const [message, setMessage] = useState("");
     const [submitting, setSubmitting] = useState(false);
 
+    // handleSubmit 提交注册或登录请求，保存会话并跳转推荐流，失败时显示错误。
     async function handleSubmit(event) {
         event.preventDefault();
         setSubmitting(true);
@@ -211,7 +215,7 @@ function LoginPage({ session, onNavigate }) {
                 token: accessToken,
             });
             session.setAuth(accessToken, profile);
-            onNavigate("/timeline");
+            onNavigate("/recommend");
         } catch (error) {
             setMessage(error.message || "登录失败，请检查账号与密码");
         } finally {
@@ -366,13 +370,14 @@ function AppShell({
     );
 }
 
+// TopNav 显示用户导航，按登录状态选择品牌首页入口。
 function TopNav({ user, authenticated, onNavigate, onLogout }) {
     return (
         <header className="top-nav">
             <div className="top-left">
                 <button
                     className="wordmark"
-                    onClick={() => onNavigate("/timeline")}
+                    onClick={() => onNavigate(authenticated ? "/recommend" : "/timeline")}
                 >
                     VideoFeed
                 </button>
@@ -435,7 +440,7 @@ function TopNav({ user, authenticated, onNavigate, onLogout }) {
     );
 }
 
-// FeedPage 加载指定场景的视频流，提示关注流登录，并处理播放切换、关注和评论交互。
+// FeedPage 加载并续页四类视频流，上报当前视频曝光，处理登录提示和播放互动并隔离过期请求。
 function FeedPage({ feedScene, session, onNavigate }) {
     const [items, setItems] = useState([]);
     const [index, setIndex] = useState(0);
@@ -451,63 +456,119 @@ function FeedPage({ feedScene, session, onNavigate }) {
     const [commentText, setCommentText] = useState("");
     const [feedState, setFeedState] = useState("loading");
     const [feedError, setFeedError] = useState("");
+    const [nextCursor, setNextCursor] = useState("");
+    const [hasMore, setHasMore] = useState(false);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [feedRequestID, setFeedRequestID] = useState("");
     const [swipe, setSwipe] = useState(null);
     const wheelLocked = useRef(false);
     const transitionTimer = useRef(null);
     const feedMainRef = useRef(null);
     const dragRef = useRef(null);
     const swipeRef = useRef(null);
+    const loadingMoreRef = useRef(false);
+    const feedRequestIDRef = useRef("");
+    const exposedRef = useRef(new Set());
+    const feedGenerationRef = useRef(0);
     const currentFeedScene =
         FEED_SCENES.find((scene) => scene.key === feedScene) || FEED_SCENES[0];
 
-    // loadFeed 加载当前场景首页，处理关注流缺少身份或认证失效，并返回阻止过期响应更新状态的清理函数。
+    // loadFeed 重置当前场景分页与曝光标识，加载首页并使旧请求失效；返回卸载清理函数。
     const loadFeed = useCallback(() => {
         let live = true;
-        if (feedScene === "following" && !session.token) {
+        const generation = ++feedGenerationRef.current;
+        loadingMoreRef.current = false;
+        feedRequestIDRef.current = "";
+        exposedRef.current = new Set();
+        if (requiresAuthFeed(feedScene) && !session.token) {
             setSwipe(null);
             setItems([]);
             setIndex(0);
             setCommentsOpen(false);
             setFeedError("");
+            setNextCursor("");
+            setHasMore(false);
+            setLoadingMore(false);
             setFeedState("auth");
             return () => {
                 live = false;
+                if (generation === feedGenerationRef.current) feedGenerationRef.current++;
             };
         }
 
+        const requestID = createFeedRequestID(feedScene);
+        feedRequestIDRef.current = requestID;
+        exposedRef.current = new Set();
+        loadingMoreRef.current = false;
+        setFeedRequestID(requestID);
+        setNextCursor("");
+        setHasMore(false);
+        setLoadingMore(false);
         setFeedState("loading");
         setFeedError("");
-        apiRequest(
-            `/api/feed-items?scene=${encodeURIComponent(feedScene)}&limit=10`,
-            { token: session.token },
-        )
+        fetchFeedPage(feedScene, session.token, "", requestID)
             .then((data) => {
-                if (!live) return;
+                if (!live || generation !== feedGenerationRef.current) return;
                 setSwipe(null);
-                setItems((data.items || []).map(mapFeedItem));
+                setItems((data.items || []).map((item) => mapFeedItem(item, feedScene, requestID)));
                 setIndex(0);
                 setCommentsOpen(false);
+                setNextCursor(data.next_cursor || "");
+                setHasMore(Boolean(data.has_more && data.next_cursor));
                 setFeedState("ready");
             })
             .catch((error) => {
-                if (!live) return;
-                if (error.status === 401 && feedScene === "following") {
+                if (!live || generation !== feedGenerationRef.current) return;
+                if (error.status === 401 && requiresAuthFeed(feedScene)) {
                     setItems([]);
                     setIndex(0);
                     setCommentsOpen(false);
+                    setNextCursor("");
+                    setHasMore(false);
                     setFeedState("auth");
                     return;
                 }
                 setItems([]);
-                setFeedError(
-                    error.message || `${currentFeedScene.label}加载失败`,
-                );
+                setFeedError(error.message || `${currentFeedScene.label}加载失败`);
                 setFeedState("error");
             });
         return () => {
             live = false;
+            if (generation === feedGenerationRef.current) feedGenerationRef.current++;
         };
     }, [currentFeedScene.label, feedScene, session.token]);
+
+    // loadMoreFeed 串行续页并去重，忽略已失效场景的响应，认证失效时退出登录。
+    const loadMoreFeed = useCallback(() => {
+        if (feedRequestID !== feedRequestIDRef.current || loadingMoreRef.current || feedState !== "ready" || !hasMore || !nextCursor || requiresAuthFeed(feedScene) && !session.token) {
+            return;
+        }
+
+        const requestID = feedRequestIDRef.current || feedRequestID || createFeedRequestID(feedScene);
+        const generation = feedGenerationRef.current;
+        loadingMoreRef.current = true;
+        setLoadingMore(true);
+        fetchFeedPage(feedScene, session.token, nextCursor, requestID)
+            .then((data) => {
+                if (generation !== feedGenerationRef.current) return;
+                const nextItems = (data.items || []).map((item) => mapFeedItem(item, feedScene, requestID));
+                setItems((state) => appendFeedItems(state, nextItems));
+                setNextCursor(data.next_cursor || "");
+                setHasMore(Boolean(data.has_more && data.next_cursor));
+            })
+            .catch((error) => {
+                if (generation !== feedGenerationRef.current) return;
+                if (error.status === 401 && requiresAuthFeed(feedScene)) {
+                    session.clearAuth();
+                    onNavigate("/auth");
+                }
+            })
+            .finally(() => {
+                if (generation !== feedGenerationRef.current) return;
+                loadingMoreRef.current = false;
+                setLoadingMore(false);
+            });
+    }, [feedRequestID, feedScene, feedState, hasMore, nextCursor, onNavigate, session]);
 
     useEffect(() => {
         if (!session.token) {
@@ -536,6 +597,12 @@ function FeedPage({ feedScene, session, onNavigate }) {
     useEffect(() => {
         return loadFeed();
     }, [loadFeed]);
+
+    useEffect(() => {
+        if (feedState === "ready" && items.length > 0 && index >= items.length - 3) {
+            loadMoreFeed();
+        }
+    }, [feedState, index, items.length, loadMoreFeed]);
 
     useEffect(() => {
         return () => {
@@ -567,6 +634,35 @@ function FeedPage({ feedScene, session, onNavigate }) {
             ),
         );
     }, []);
+
+    useEffect(() => {
+        if (!current || feedState !== "ready" || !session.token) return;
+        if (current.feed_scene !== feedScene || current.request_id !== feedRequestIDRef.current) return;
+        const generation = feedGenerationRef.current;
+        const scene = current.feed_scene || feedScene;
+        const requestID = current.request_id || feedRequestID;
+        const exposureKey = `${scene}:${requestID}:${current.video_id}`;
+        if (!requestID || exposedRef.current.has(exposureKey)) return;
+        exposedRef.current.add(exposureKey);
+        apiRequest("/api/video-view-events", {
+            method: "POST",
+            token: session.token,
+            body: {
+                video_id: current.video_id,
+                scene,
+                request_id: requestID,
+                event_type: "exposed",
+                watch_ms: 0,
+                completed: false
+            }
+        }).catch((error) => {
+            if (generation !== feedGenerationRef.current) return;
+            if (error.status === 401 && requiresAuthFeed(feedScene)) {
+                session.clearAuth();
+                onNavigate("/auth");
+            }
+        });
+    }, [current, feedRequestID, feedScene, feedState, onNavigate, session]);
 
     const requireLogin = useCallback(() => {
         if (session.token) return true;
@@ -970,7 +1066,7 @@ function FeedPage({ feedScene, session, onNavigate }) {
                 {feedState === "auth" && (
                     <FeedMessage
                         icon="lock"
-                        title="登录后查看关注流"
+                        title={`登录后查看${currentFeedScene.label}`}
                         action="登录"
                         onAction={() => onNavigate("/auth")}
                     />
@@ -1098,6 +1194,10 @@ function FeedPage({ feedScene, session, onNavigate }) {
                             )}
                         </div>
                     </div>
+                )}
+                {feedState === "ready" && loadingMore && <div className="feed-loading-pill">加载中</div>}
+                {feedState === "ready" && items.length > 0 && !hasMore && index === items.length - 1 && (
+                    <div className="feed-loading-pill">已到末尾</div>
                 )}
             </section>
             <CommentPanel
@@ -2460,6 +2560,55 @@ function logout(session, setRoute) {
     navigate("/timeline", setRoute);
 }
 
+// requiresAuthFeed 判断推荐流和关注流是否需要登录。
+function requiresAuthFeed(scene) {
+  return scene === "following" || scene === "recommend";
+}
+
+// createFeedRequestID 按场景、时间和随机后缀生成本轮分页与曝光的请求标识。
+function createFeedRequestID(scene) {
+  const random = Math.random().toString(36).slice(2, 8);
+  return `web-${scene}-${Date.now()}-${random}`;
+}
+
+// fetchFeedPage 按场景请求一页视频，推荐场景使用当前仓库的 JSON 查询接口。
+async function fetchFeedPage(scene, token, cursor = "", requestID = "") {
+  const limit = 10;
+  if (scene === "recommend") {
+    return apiRequest("/api/feed/query", {
+      method: "POST",
+      token,
+      body: {
+        scene,
+        cursor,
+        limit,
+        context: {
+          request_id: requestID
+        }
+      }
+    });
+  }
+
+  const params = new URLSearchParams({ scene, limit: String(limit) });
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+  return apiRequest(`/api/feed-items?${params.toString()}`, { token });
+}
+
+// appendFeedItems 按视频标识合并后续页面，保留已有顺序并去重。
+function appendFeedItems(currentItems, nextItems) {
+  if (!nextItems.length) return currentItems;
+  const seen = new Set(currentItems.map((item) => item.video_id));
+  const merged = [...currentItems];
+  for (const item of nextItems) {
+    if (seen.has(item.video_id)) continue;
+    seen.add(item.video_id);
+    merged.push(item);
+  }
+  return merged;
+}
+
 function readStoredUser() {
     try {
         const raw = localStorage.getItem(USER_KEY);
@@ -2656,7 +2805,8 @@ function updateSessionRelationCount(session, followingCount) {
     });
 }
 
-function mapFeedItem(item) {
+// mapFeedItem 映射视频卡片字段并携带场景和请求标识用于曝光上报。
+function mapFeedItem(item, feedScene = "timeline", requestID = "") {
     return {
         video_id: item.video_id,
         author_id: item.author_id,
@@ -2669,6 +2819,8 @@ function mapFeedItem(item) {
         author: item.author_nickname || `创作者_${item.author_id}`,
         avatar_url: item.author_avatar_url || image.creator,
         description: item.description || "",
+        feed_scene: feedScene,
+        request_id: requestID,
     };
 }
 
