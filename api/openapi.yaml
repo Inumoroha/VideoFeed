@@ -53,7 +53,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
-                error: invalid target user id
+                error: target user id must be positive
         '401':
           description: 缺少或无效访问令牌
           content:
@@ -72,6 +72,75 @@ paths:
                 error: target user not found
         '500':
           description: 关系保存或回填失败；回填失败时已保存的关系不会撤销
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
+    delete:
+      tags:
+      - Relation
+      summary: 取消关注用户
+      operationId: unfollowRelationUser
+      description: 用户身份来自 JWT，无请求体。软状态取消关注并在同一事务维护双方统计；重复目标状态不重复计数，不执行作品回填。幂等键按用户隔离，重用已有键返回首次关系与计数快照，可能仍为关注状态；新动作应使用新键。
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: targetUserId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+        description: 目标用户 ID，不能等于当前用户。
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+        description: 去除首尾空白后最多 128 个 UTF-8 字节。相同用户和幂等键重放首次结果。
+      responses:
+        '200':
+          description: 关系状态与计数；幂等重放返回首次结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FollowResult'
+              example:
+                user_id: 42
+                target_user_id: 77
+                status: 2
+                following: false
+                following_count: 2
+                follower_count: 3
+        '400':
+          description: 路径参数、自关注或幂等键无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: target user id must be positive
+        '401':
+          description: 缺少或无效访问令牌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid access token
+        '404':
+          description: 当前用户或目标用户不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: target user not found
+        '500':
+          description: 关系读取或更新失败
           content:
             application/json:
               schema:
@@ -125,7 +194,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
-                error: invalid target user id
+                error: target user id must be positive
         '401':
           description: 缺少或无效访问令牌
           content:
@@ -144,6 +213,315 @@ paths:
                 error: target user not found
         '500':
           description: 关系保存或回填失败；回填失败时已保存的关系不会撤销
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
+    delete:
+      tags:
+      - Relation
+      summary: 取消关注用户
+      operationId: unfollowUser
+      description: 用户身份来自 JWT，无请求体。软状态取消关注并在同一事务维护双方统计；重复目标状态不重复计数，不执行作品回填。幂等键按用户隔离，重用已有键返回首次关系与计数快照，可能仍为关注状态；新动作应使用新键。
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: targetUserId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+        description: 目标用户 ID，不能等于当前用户。
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+        description: 去除首尾空白后最多 128 个 UTF-8 字节。相同用户和幂等键重放首次结果。
+      responses:
+        '200':
+          description: 关系状态与计数；幂等重放返回首次结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FollowResult'
+              example:
+                user_id: 42
+                target_user_id: 77
+                status: 2
+                following: false
+                following_count: 2
+                follower_count: 3
+        '400':
+          description: 路径参数、自关注或幂等键无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: target user id must be positive
+        '401':
+          description: 缺少或无效访问令牌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid access token
+        '404':
+          description: 当前用户或目标用户不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: target user not found
+        '500':
+          description: 关系读取或更新失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
+  /api/users/me/following:
+    get:
+      tags:
+      - Relation
+      summary: 查询当前用户的关注列表
+      operationId: listFollowing
+      security:
+      - bearerAuth: []
+      description: 当前用户来自 JWT。仅返回有效关注关系和正常用户，按关系更新时间及对方用户 ID 倒序。limit 默认 20，超过 100 裁剪为 100，显式非正数或非整数返回 400。游标含 followed_at
+        和 user_id；非空末页仍有 next_cursor，以 has_more 判断是否继续。空结果返回空数组；不对当前 JWT 用户单独执行存在性查询。
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        description: 返回条数，超过 100 按 100 处理。
+        schema:
+          type: integer
+          minimum: 1
+          default: 20
+      - name: cursor
+        in: query
+        required: false
+        description: 上页返回的 Base64 游标，包含 followed_at 时间和正数 user_id。空值表示首页。
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 关系列表分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationListResponse'
+              example:
+                items: []
+                next_cursor: ''
+                has_more: false
+        '400':
+          description: 分页数量或游标格式无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: cursor is invalid
+        '401':
+          description: 缺少或无效访问令牌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid access token
+        '500':
+          description: 关系读取失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
+  /api/users/me/followers:
+    get:
+      tags:
+      - Relation
+      summary: 查询当前用户的粉丝列表
+      operationId: listFollowers
+      security:
+      - bearerAuth: []
+      description: 当前用户来自 JWT。仅返回有效关注关系和正常用户，按关系更新时间及对方用户 ID 倒序。limit 默认 20，超过 100 裁剪为 100，显式非正数或非整数返回 400。游标含 followed_at
+        和 user_id；非空末页仍有 next_cursor，以 has_more 判断是否继续。空结果返回空数组；不对当前 JWT 用户单独执行存在性查询。
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        description: 返回条数，超过 100 按 100 处理。
+        schema:
+          type: integer
+          minimum: 1
+          default: 20
+      - name: cursor
+        in: query
+        required: false
+        description: 上页返回的 Base64 游标，包含 followed_at 时间和正数 user_id。空值表示首页。
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 关系列表分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationListResponse'
+              example:
+                items: []
+                next_cursor: ''
+                has_more: false
+        '400':
+          description: 分页数量或游标格式无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: cursor is invalid
+        '401':
+          description: 缺少或无效访问令牌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid access token
+        '500':
+          description: 关系读取失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
+  /api/relations/following:
+    get:
+      tags:
+      - Relation
+      summary: 查询当前用户的关注列表
+      operationId: listRelationFollowing
+      security:
+      - bearerAuth: []
+      description: 当前用户来自 JWT。仅返回有效关注关系和正常用户，按关系更新时间及对方用户 ID 倒序。limit 默认 20，超过 100 裁剪为 100，显式非正数或非整数返回 400。游标含 followed_at
+        和 user_id；非空末页仍有 next_cursor，以 has_more 判断是否继续。空结果返回空数组；不对当前 JWT 用户单独执行存在性查询。
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        description: 返回条数，超过 100 按 100 处理。
+        schema:
+          type: integer
+          minimum: 1
+          default: 20
+      - name: cursor
+        in: query
+        required: false
+        description: 上页返回的 Base64 游标，包含 followed_at 时间和正数 user_id。空值表示首页。
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 关系列表分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationListResponse'
+              example:
+                items: []
+                next_cursor: ''
+                has_more: false
+        '400':
+          description: 分页数量或游标格式无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: cursor is invalid
+        '401':
+          description: 缺少或无效访问令牌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid access token
+        '500':
+          description: 关系读取失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
+  /api/relations/followers:
+    get:
+      tags:
+      - Relation
+      summary: 查询当前用户的粉丝列表
+      operationId: listRelationFollowers
+      security:
+      - bearerAuth: []
+      description: 当前用户来自 JWT。仅返回有效关注关系和正常用户，按关系更新时间及对方用户 ID 倒序。limit 默认 20，超过 100 裁剪为 100，显式非正数或非整数返回 400。游标含 followed_at
+        和 user_id；非空末页仍有 next_cursor，以 has_more 判断是否继续。空结果返回空数组；不对当前 JWT 用户单独执行存在性查询。
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        description: 返回条数，超过 100 按 100 处理。
+        schema:
+          type: integer
+          minimum: 1
+          default: 20
+      - name: cursor
+        in: query
+        required: false
+        description: 上页返回的 Base64 游标，包含 followed_at 时间和正数 user_id。空值表示首页。
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 关系列表分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationListResponse'
+              example:
+                items: []
+                next_cursor: ''
+                has_more: false
+        '400':
+          description: 分页数量或游标格式无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: cursor is invalid
+        '401':
+          description: 缺少或无效访问令牌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid access token
+        '500':
+          description: 关系读取失败
           content:
             application/json:
               schema:
@@ -1234,6 +1612,48 @@ components:
           type: string
           format: date-time
           description: 仅近期曝光命中时返回；允许曝光时省略。
+    RelationUser:
+      type: object
+      required:
+      - user_id
+      - nickname
+      - avatar_url
+      - bio
+      - followed_at
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        nickname:
+          type: string
+        avatar_url:
+          type: string
+        bio:
+          type: string
+        followed_at:
+          type: string
+          format: date-time
+      example:
+        user_id: 77
+        nickname: 示例用户
+        avatar_url: https://example.com/avatar.png
+        bio: 示例简介
+        followed_at: '2026-09-20T10:00:00Z'
+    RelationListResponse:
+      type: object
+      required:
+      - items
+      - next_cursor
+      - has_more
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelationUser'
+        next_cursor:
+          type: string
+        has_more:
+          type: boolean
     FollowResult:
       type: object
       required:
