@@ -48,12 +48,18 @@ valid_port() {
     [[ "${port}" =~ ^[0-9]+$ ]] && ((port >= 1 && port <= 65535))
 }
 
-# 终止服务进程及其子进程，避免 Windows 下 npm 或 go run 留下孤儿进程。
+# stop_process_tree 终止服务进程及其子进程，兼容 Windows 进程树和 Unix 的 go run/npm 子进程。
 stop_process_tree() {
     local pid="$1"
     if command -v taskkill.exe >/dev/null 2>&1; then
         taskkill.exe //PID "${pid}" //T //F >/dev/null 2>&1 || true
         return
+    fi
+    if command -v pgrep >/dev/null 2>&1; then
+        local child
+        while read -r child; do
+            [[ -n "${child}" ]] && stop_process_tree "${child}"
+        done < <(pgrep -P "${pid}" || true)
     fi
     kill "${pid}" 2>/dev/null || true
 }
@@ -109,11 +115,14 @@ if [[ ! -f "${WEB_DIR}/node_modules/.bin/vite" && ! -f "${WEB_DIR}/node_modules/
     fi
 fi
 
-# 停止已启动的服务，等待子进程退出并保留原始退出码。
+# cleanup 停止已启动的 API、worker 和前端，等待子进程退出并保留原始退出码。
 cleanup() {
     local code=$?
     trap - EXIT INT TERM
 
+    if [[ -n "${WORKER_PID:-}" ]] && kill -0 "${WORKER_PID}" 2>/dev/null; then
+        stop_process_tree "${WORKER_PID}"
+    fi
     if [[ -n "${API_PID:-}" ]] && kill -0 "${API_PID}" 2>/dev/null; then
         stop_process_tree "${API_PID}"
     fi
@@ -121,7 +130,7 @@ cleanup() {
         stop_process_tree "${WEB_PID}"
     fi
 
-    wait "${API_PID:-}" "${WEB_PID:-}" 2>/dev/null || true
+    wait "${WORKER_PID:-}" "${API_PID:-}" "${WEB_PID:-}" 2>/dev/null || true
     rm -f "${API_LOG:-}" 2>/dev/null || true
     exit "${code}"
 }
@@ -192,17 +201,28 @@ if [[ "${WEB_PORT}" == "${API_PORT}" ]]; then
 fi
 export WEB_PORT
 
+echo "Starting feed worker"
+echo "Working directory: ${API_DIR}"
+echo "Config: ${CONFIG_FILE}"
+(cd "${API_DIR}" && exec go run ./cmd/worker) &
+WORKER_PID=$!
+
 echo "Starting web dev server"
 echo "Working directory: ${WEB_DIR}"
 echo "URL: http://127.0.0.1:${WEB_PORT}/"
 (cd "${WEB_DIR}" && exec npm run dev) &
 WEB_PID=$!
 
+echo "Worker PID: ${WORKER_PID}"
 echo "API PID: ${API_PID}"
 echo "Web PID: ${WEB_PID}"
-echo "Press Ctrl+C to stop both services"
+echo "Press Ctrl+C to stop services"
 
 while true; do
+    if ! kill -0 "${WORKER_PID}" 2>/dev/null; then
+        wait "${WORKER_PID}"
+        exit $?
+    fi
     if ! kill -0 "${API_PID}" 2>/dev/null; then
         wait "${API_PID}"
         exit $?

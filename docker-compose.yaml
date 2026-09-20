@@ -33,6 +33,9 @@ services:
     rabbitmq:
         image: rabbitmq:3.13-management-alpine
         container_name: rabbitmq_container
+        environment:
+            RABBITMQ_DEFAULT_USER: rabbitmq
+            RABBITMQ_DEFAULT_PASS: rabbitmq_password
         ports:
             - "5672:5672"
             - "15672:15672"
@@ -75,6 +78,25 @@ services:
             timeout: 3s
             retries: 12
             start_period: 20s
+
+    worker:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        command: ["./videofeed-worker"]
+        restart: on-failure
+        depends_on:
+            postgres:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+            rabbitmq:
+                condition: service_healthy
+        environment:
+            DATABASE_URL: postgres://postgres:video_feed_dev@postgres:5432/video_feed?sslmode=disable
+            JWT_SECRET: ${JWT_SECRET:-local-dev-secret-change-before-deployment-2026}
+        volumes:
+            - ./configs/config.docker.yaml:/app/configs/config.yaml:ro
 
     web:
         build:

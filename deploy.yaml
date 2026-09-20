@@ -1,0 +1,526 @@
+# 示例部署：应用前替换 Secret 占位值并设置可拉取的镜像地址。
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: videofeed
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: videofeed-secret
+  namespace: videofeed
+type: Opaque
+stringData:
+  postgres-password: replace-with-strong-postgres-password
+  rabbitmq-password: replace-with-strong-rabbitmq-password
+  database-url: postgres://videofeed:replace-with-strong-postgres-password@postgres:5432/video_feed?sslmode=disable
+  rabbitmq-url: amqp://videofeed:replace-with-strong-rabbitmq-password@rabbitmq:5672/
+  jwt-secret: replace-with-strong-jwt-secret-at-least-32-bytes
+  api-config.yaml: |
+    app:
+      name: video-feed
+      env: production
+      version: 1.0.0
+    server:
+      host: 0.0.0.0
+      port: 9000
+      read_header_timeout: 5s
+      read_timeout: 15s
+      write_timeout: 15s
+      idle_timeout: 60s
+      shutdown_timeout: 10s
+    database:
+      driver: postgres
+      url: ${DATABASE_URL}
+    auth:
+      jwt:
+        secret: ${JWT_SECRET}
+        access_ttl: 15m
+        refresh_ttl: 168h
+    redis:
+      addr: redis:6379
+      password: ''
+      db: 0
+    rabbitmq:
+      url: ${RABBITMQ_URL}
+      interaction_exchange: videofeed.interaction
+      action_changed_queue: videofeed.interaction.action_changed
+      action_changed_routing: interaction.action_changed
+      video_exchange: videofeed.video
+      video_published_queue: videofeed.video.published
+      video_published_routing: video.published
+      exposure_exchange: videofeed.exposure
+      view_event_recorded_queue: videofeed.exposure.view_event_recorded
+      view_event_recorded_routing: exposure.view_event_recorded
+      video_embedding_queue: videofeed.video.embedding
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: videofeed
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: videofeed
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rabbitmq-data
+  namespace: videofeed
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: api-uploads
+  namespace: videofeed
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: videofeed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:17-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          value: videofeed
+        - name: POSTGRES_DB
+          value: video_feed
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: videofeed-secret
+              key: postgres-password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - videofeed
+            - -d
+            - video_feed
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 20
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - videofeed
+            - -d
+            - video_feed
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 6
+      volumes:
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: postgres-data
+  strategy:
+    type: Recreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: videofeed
+spec:
+  selector:
+    app: postgres
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: videofeed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7.4-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 20
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 6
+      volumes:
+      - name: redis-data
+        persistentVolumeClaim:
+          claimName: redis-data
+  strategy:
+    type: Recreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: videofeed
+spec:
+  selector:
+    app: redis
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+  namespace: videofeed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      containers:
+      - name: rabbitmq
+        image: rabbitmq:3.13-management-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: amqp
+          containerPort: 5672
+        - name: management
+          containerPort: 15672
+        volumeMounts:
+        - name: rabbitmq-data
+          mountPath: /var/lib/rabbitmq
+        readinessProbe:
+          exec:
+            command:
+            - rabbitmq-diagnostics
+            - -q
+            - ping
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 20
+        livenessProbe:
+          exec:
+            command:
+            - rabbitmq-diagnostics
+            - -q
+            - ping
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 6
+        env:
+        - name: RABBITMQ_DEFAULT_USER
+          value: videofeed
+        - name: RABBITMQ_DEFAULT_PASS
+          valueFrom:
+            secretKeyRef:
+              name: videofeed-secret
+              key: rabbitmq-password
+      volumes:
+      - name: rabbitmq-data
+        persistentVolumeClaim:
+          claimName: rabbitmq-data
+  strategy:
+    type: Recreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: videofeed
+spec:
+  selector:
+    app: rabbitmq
+  ports:
+  - name: amqp
+    port: 5672
+    targetPort: 5672
+  - name: management
+    port: 15672
+    targetPort: 15672
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: videofeed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+      - name: api
+        image: videofeed-api:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9000
+        volumeMounts:
+        - name: api-config
+          mountPath: /app/configs/config.yaml
+          subPath: api-config.yaml
+          readOnly: true
+        - name: api-uploads
+          mountPath: /app/uploads
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9000
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 12
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9000
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 6
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: videofeed-secret
+              key: database-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: videofeed-secret
+              key: jwt-secret
+        - name: RABBITMQ_URL
+          valueFrom:
+            secretKeyRef:
+              name: videofeed-secret
+              key: rabbitmq-url
+      volumes:
+      - name: api-config
+        secret:
+          secretName: videofeed-secret
+          items:
+          - key: api-config.yaml
+            path: api-config.yaml
+      - name: api-uploads
+        persistentVolumeClaim:
+          claimName: api-uploads
+      initContainers:
+      - name: wait-dependencies
+        image: busybox:1.37
+        command:
+        - sh
+        - -c
+        - until nc -z postgres 5432 && nc -z redis 6379 && nc -z rabbitmq 5672; do sleep 2; done
+  strategy:
+    type: Recreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: videofeed
+spec:
+  selector:
+    app: api
+  ports:
+  - name: http
+    port: 9000
+    targetPort: 9000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: videofeed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+      - name: worker
+        image: videofeed-api:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - ./videofeed-worker
+        volumeMounts:
+        - name: api-config
+          mountPath: /app/configs/config.yaml
+          subPath: api-config.yaml
+          readOnly: true
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: videofeed-secret
+              key: database-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: videofeed-secret
+              key: jwt-secret
+        - name: RABBITMQ_URL
+          valueFrom:
+            secretKeyRef:
+              name: videofeed-secret
+              key: rabbitmq-url
+      volumes:
+      - name: api-config
+        secret:
+          secretName: videofeed-secret
+          items:
+          - key: api-config.yaml
+            path: api-config.yaml
+      initContainers:
+      - name: wait-dependencies
+        image: busybox:1.37
+        command:
+        - sh
+        - -c
+        - until nc -z postgres 5432 && nc -z redis 6379 && nc -z rabbitmq 5672; do sleep 2; done
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: videofeed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: web
+        image: videofeed-web:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 6
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 6
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: videofeed
+spec:
+  type: NodePort
+  selector:
+    app: web
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    nodePort: 30080
