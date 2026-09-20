@@ -236,9 +236,10 @@ func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandle
 	uploads.POST("", uploadHandler.Create)
 }
 
-// registerRecommendationRoutes 注册无需 JWT 的内部推荐候选与批量曝光接口。
+// registerRecommendationRoutes 注册无需 JWT 的内部推荐候选、曝光决策与批量曝光接口。
 func registerRecommendationRoutes(g *gin.Engine, handler *recommendationhandler.Handler) {
 	internal := g.Group("/internal")
 	internal.POST("/recommendation-candidates", handler.ListCandidates)
+	internal.POST("/exposure-decisions", handler.DecideExposures)
 	internal.POST("/exposures", handler.SaveExposures)
 }

@@ -16,7 +16,6 @@ import (
 )
 
 const hotScoreExpression = "COALESCE(vs.like_count, 0) * 3 + COALESCE(vs.comment_count, 0) * 5 + COALESCE(vs.favorite_count, 0) * 4"
-const recentExposureWindow = 7 * 24 * time.Hour
 const positiveEventWindow = 30 * 24 * time.Hour
 
 // Repository 通过 PostgreSQL 查询推荐候选和兴趣向量，并以事务保存曝光。
@@ -57,7 +56,7 @@ func (r *Repository) ListCandidatePool(ctx context.Context, userID int64, limit 
 		Joins(
 			"LEFT JOIN exposures AS e ON e.user_id = ? AND e.video_id = v.id AND e.last_exposed_at >= ?",
 			userID,
-			time.Now().Add(-recentExposureWindow),
+			time.Now().Add(-domainrecommendation.RecentExposureWindow),
 		).
 		Where("v.status = ? AND v.published_at IS NOT NULL AND e.video_id IS NULL", domainvideo.StatusPublished).
 		Order("hot_score DESC").
