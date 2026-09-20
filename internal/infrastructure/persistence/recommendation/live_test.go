@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-// TestRecommendationPostgresLive 在独立 schema 验证并发曝光计数、唯一约束、批量回滚、失败重试和七日过滤，并关闭连接清理数据。
+// TestRecommendationPostgresLive 在独立 schema 验证并发曝光计数、唯一约束、批量回滚、失败重试和七日过滤、曝光决策边界与并发只读行为，并关闭连接清理数据。
 func TestRecommendationPostgresLive(t *testing.T) {
 	url := os.Getenv("VIDEOFEED_TEST_POSTGRES_URL")
 	if url == "" {
@@ -105,4 +105,5 @@ func TestRecommendationPostgresLive(t *testing.T) {
 	if err != nil || len(pool) != 2 {
 		t.Fatal(pool, err)
 	}
+	verifyExposureDecisionsLive(t, db)
 }

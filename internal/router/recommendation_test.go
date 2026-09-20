@@ -48,7 +48,7 @@ func TestRecommendationRegisteredRoutes(t *testing.T) {
 	for _, route := range []struct {
 		path, body string
 		status     int
-	}{{"/internal/recommendation-candidates", `{"user_id":42,"scene":"recommend"}`, 200}, {"/internal/exposures", `{}`, 201}} {
+	}{{"/internal/recommendation-candidates", `{"user_id":42,"scene":"recommend"}`, 200}, {"/internal/exposures", `{}`, 201}, {"/internal/exposure-decisions", `{"user_id":42,"scene":"recommend"}`, 200}} {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPost, route.path, strings.NewReader(route.body))
 		r.Header.Set("Content-Type", "application/json")

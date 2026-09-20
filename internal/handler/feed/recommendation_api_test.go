@@ -323,6 +323,7 @@ func newRecommendationRouter() *gin.Engine {
 
 	internal := router.Group("/internal")
 	internal.POST("/recommendation-candidates", handler.ListCandidates)
+	internal.POST("/exposure-decisions", handler.DecideExposures)
 	internal.POST("/exposures", handler.SaveExposures)
 
 	return router
