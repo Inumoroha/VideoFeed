@@ -193,4 +193,4 @@ docker compose down -v
 
 ## 推荐流 MVP
 
-后端已支持 `GET /api/feed-items?scene=recommend` 和 `POST /api/feed/query` 的推荐场景，必须携带访问令牌。内部候选及曝光接口不使用 JWT。实现与边界见 [推荐模块](docs/modules/recommendation.md)，逐文件审计见 [迁移记录](docs/migration-cafc119.md)。现有前端导航未新增推荐入口。
+后端已支持 `GET /api/feed-items?scene=recommend` 和 `POST /api/feed/query` 的推荐场景，必须携带访问令牌。内部候选及曝光接口不使用 JWT。实现与边界见 [推荐模块](docs/modules/recommendation.md)，逐文件审计见 [迁移记录](docs/migration-cafc119.md)。前端 `/recommend` 已接入推荐流；登录后默认进入推荐页，支持游标续页和曝光上报。前端验证使用 `npm --prefix web test` 与 `npm --prefix web run build`，迁移审计见 [2df157c](docs/migration-2df157c.md)。

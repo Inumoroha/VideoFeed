@@ -99,9 +99,9 @@ feed:timeline:v1:limit:{limit}:cursor:{sha1(cursor)}
 
 ## 6. 前端关注流入口
 
-打开 `/following` 或点击侧栏“关注流”进入。前端 `web/src/App.jsx` 在没有访问令牌时直接显示“登录后查看关注流”，不请求 Feed 接口；有令牌时调用 `GET /api/feed-items?scene=following&limit=10`。关注流请求返回 401 时同样显示登录提示，其他错误保留重新加载操作。登录按钮进入 `/auth`，登录成功仍按现有流程进入时间线。
+打开 `/following` 或点击侧栏“关注流”进入。前端 `web/src/App.jsx` 在没有访问令牌时直接显示“登录后查看关注流”，不请求 Feed 接口；有令牌时调用 `GET /api/feed-items?scene=following&limit=10`。关注流请求返回 401 时同样显示登录提示，其他错误保留重新加载操作。登录按钮进入 `/auth`，登录成功进入推荐流。
 
-桌面导航按“最新视频、关注流、热门榜单”排列；900px 及以下宽度使用三等分底栏，样式位于 `web/src/style.css`。现有 Vite 和 Nginx 的单页回退支持直接访问 `/following`，不新增服务端路由。页面切换或令牌变化时，旧 Feed 请求的返回结果不会再更新状态。
+桌面导航按“推荐流、最新视频、关注流、热门榜单”排列；900px 及以下宽度使用四等分底栏，样式位于 `web/src/style.css`。现有 Vite 和 Nginx 的单页回退支持直接访问 `/following`，不新增服务端路由。页面切换或令牌变化时，旧 Feed 请求的返回结果不会再更新状态。
 
 前端构建命令为 `cd web` 后运行 `npm run build`；开发服务默认端口为 5173。迁移映射和验证结果见 [前端入口迁移审计](../migration-7d58cd0.md)。
 
