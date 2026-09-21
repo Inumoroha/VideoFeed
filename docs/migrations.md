@@ -23,3 +23,7 @@
 - [0b7a4b3：消息中心前端页面、角标和已读操作](migration-0b7a4b3.md)
 
 - [eb79ab1：同步消息中心产品实现状态](migration-eb79ab1.md)
+
+## 播放优化迁移
+
+播放模块已接入现有 PostgreSQL 自动迁移，无新增服务或环境变量。四条接口、分层适配和验证限制见 [迁移审计](migration-b28ef00.md) 与 [播放模块](modules/playback.md)。

@@ -96,4 +96,4 @@ MQ 成功逐条确认，非法 JSON 拒绝且不重新入队，处理失败重�
 
 ## 6. 规划边界
 
-审核、消息、后台运营、播放参数/QoS、通用限流与降级开关、监控告警尚未实现。规划模块文档保留接口与数据设计，但不写入已实现 OpenAPI。进一步性能方案见 [优化专题](optimization.md)，历史迁移与真实服务证据见 [迁移记录](migrations.md)。
+播放参数、预加载与 QoS 已由 `internal/application/playback`、`internal/infrastructure/persistence/playback` 和 `internal/handler/playback` 实现，使用 `playback_config` 与 `playback_qos_log`，详情见 [播放模块](modules/playback.md)。审核、后台运营、通用限流与降级开关、监控告警尚未实现。规划模块文档保留接口与数据设计，但不写入已实现 OpenAPI。进一步性能方案见 [优化专题](optimization.md)，历史迁移与真实服务证据见 [迁移记录](migrations.md)。

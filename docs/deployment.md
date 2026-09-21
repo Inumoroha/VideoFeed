@@ -80,3 +80,7 @@ python -B scripts/verify_exposure_live.py --embedding --output docs/worker-embed
 
 
 消息中心前端地址为 `http://127.0.0.1:5173/messages`。Vite 复用现有 `/api` 代理，生产 Nginx 的 `try_files ... /index.html` 支持直接访问和刷新该路径；不需要新增服务、环境变量或代理规则。前端不需要 `INTERNAL_TOKEN`。运行 `npm --prefix web test` 和 `npm --prefix web run build` 验证，生产镜像仍由 `web/Dockerfile` 构建。
+
+## 播放优化迁移
+
+播放模块已接入现有 PostgreSQL 自动迁移，无新增服务或环境变量。四条接口、分层适配和验证限制见 [迁移审计](migration-b28ef00.md) 与 [播放模块](modules/playback.md)。

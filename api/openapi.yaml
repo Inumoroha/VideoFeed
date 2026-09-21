@@ -6,6 +6,268 @@ servers:
   - url: /
     description: Current API server
 paths:
+  /api/playback-config:
+    get:
+      tags:
+      - Playback
+      summary: 读取播放配置并按网络逐级回退
+      operationId: getPlaybackConfig
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: platform
+        in: query
+        required: false
+        schema:
+          type: string
+          default: Web
+        description: 去除首尾空白后的 UTF-8 字节数最多 16；空值使用默认值。
+      - name: network_type
+        in: query
+        required: false
+        schema:
+          type: string
+          default: DEFAULT
+        description: 去除首尾空白后的 UTF-8 字节数最多 16；空值使用默认值。
+      responses:
+        '200':
+          description: 命中特定网络、同平台 DEFAULT 或领域默认配置
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackConfig'
+              example:
+                id: 0
+                platform: Web
+                network_type: DEFAULT
+                preload_count: 3
+                buffer_ms: 1200
+                updated_at: '2026-09-21T00:00:00Z'
+        '400':
+          description: invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid request
+        '401':
+          description: invalid access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid access token
+        '500':
+          description: internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
+  /api/preload-videos:
+    get:
+      tags:
+      - Playback
+      summary: 读取后续公开预加载视频
+      operationId: listPreloadVideos
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: current_video_id
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+        description: 0 或未找到已发布视频时返回最新公开视频；否则按发布时间与 ID 查询更早的视频。
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 3
+        description: 超过 10 时截断为 10。
+      responses:
+        '200':
+          description: 按发布时间与 ID 倒序返回，空结果 items 为 []
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreloadVideos'
+              example:
+                items:
+                - video_id: 1000
+                  media_url: /uploads/example.mp4
+                  cover_url: /uploads/example.jpg
+        '400':
+          description: invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid request
+        '401':
+          description: invalid access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid access token
+        '500':
+          description: internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
+  /api/playback-qos-reports:
+    post:
+      tags:
+      - Playback
+      summary: 上报当前用户播放质量
+      operationId: createPlaybackQoSReport
+      security:
+      - bearerAuth: []
+      description: 按用户和非空 Idempotency-Key 去重，重放返回首次记录。空键不去重；不校验视频是否存在。指标写入数据库，不自动重试。
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: false
+        description: 去除首尾空白后最多 128 个 UTF-8 字节。
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaybackQoSRequest'
+            example:
+              video_id: 1001
+              first_frame_ms: 150
+              stutter_count: 0
+              watch_ms: 3000
+      responses:
+        '201':
+          description: 首次写入
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackQoSReport'
+              example: &playback_id001
+                id: 1
+                user_id: 42
+                video_id: 1001
+                first_frame_ms: 150
+                stutter_count: 0
+                watch_ms: 3000
+                created_at: '2026-09-21T00:00:00Z'
+        '200':
+          description: 相同用户和幂等键的既有记录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackQoSReport'
+              example: *playback_id001
+        '400':
+          description: invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid request
+        '401':
+          description: invalid access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid access token
+        '500':
+          description: internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
+  /internal/playback-qos-reports:
+    post:
+      tags:
+      - Playback
+      summary: 上报播放质量（内部服务）
+      operationId: createInternalPlaybackQoSReport
+      security:
+      - internalToken: []
+      description: 按用户和非空 Idempotency-Key 去重，重放返回首次记录。空键不去重；不校验视频是否存在。指标写入数据库，不自动重试。
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: false
+        description: 去除首尾空白后最多 128 个 UTF-8 字节。
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InternalPlaybackQoSRequest'
+            example:
+              video_id: 1001
+              first_frame_ms: 150
+              stutter_count: 0
+              watch_ms: 3000
+              user_id: 42
+      responses:
+        '201':
+          description: 首次写入
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackQoSReport'
+              example: *playback_id001
+        '200':
+          description: 相同用户和幂等键的既有记录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackQoSReport'
+              example: *playback_id001
+        '400':
+          description: invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid request
+        '401':
+          description: 内部令牌为空、缺失或不匹配
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid internal token
+        '500':
+          description: internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
   /api/messages:
     get:
       tags:
@@ -1746,6 +2008,142 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    PlaybackConfig:
+      type: object
+      required:
+      - id
+      - platform
+      - network_type
+      - preload_count
+      - buffer_ms
+      - updated_at
+      properties:
+        id:
+          type: integer
+          minimum: 0
+        platform:
+          type: string
+        network_type:
+          type: string
+        preload_count:
+          type: integer
+          minimum: 1
+          maximum: 10
+        buffer_ms:
+          type: integer
+          minimum: 1
+        updated_at:
+          type: string
+          format: date-time
+    PreloadVideo:
+      type: object
+      required:
+      - video_id
+      - media_url
+      - cover_url
+      properties:
+        video_id:
+          type: integer
+          minimum: 1
+        media_url:
+          type: string
+        cover_url:
+          type: string
+    PreloadVideos:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PreloadVideo'
+    PlaybackQoSRequest:
+      type: object
+      required:
+      - video_id
+      properties:
+        user_id:
+          type: integer
+          description: 忽略该字段并使用 JWT 用户标识。
+          nullable: true
+        video_id:
+          type: integer
+          minimum: 1
+        first_frame_ms:
+          type: integer
+          minimum: 0
+          nullable: true
+        stutter_count:
+          type: integer
+          minimum: 0
+          default: 0
+          nullable: true
+        watch_ms:
+          type: integer
+          minimum: 0
+          default: 0
+          nullable: true
+      description: 仅 video_id 必须为正数；其余整数缺省或 null 由 Go 解码为 0。first_frame_ms 缺省或 null 表示未采集。
+    InternalPlaybackQoSRequest:
+      type: object
+      required:
+      - video_id
+      properties:
+        user_id:
+          type: integer
+          description: 内部调用用户标识；缺省或 null 为 0。
+          nullable: true
+          minimum: 0
+        video_id:
+          type: integer
+          minimum: 1
+        first_frame_ms:
+          type: integer
+          minimum: 0
+          nullable: true
+        stutter_count:
+          type: integer
+          minimum: 0
+          default: 0
+          nullable: true
+        watch_ms:
+          type: integer
+          minimum: 0
+          default: 0
+          nullable: true
+      description: 仅 video_id 必须为正数；其余整数缺省或 null 由 Go 解码为 0。first_frame_ms 缺省或 null 表示未采集。
+    PlaybackQoSReport:
+      type: object
+      required:
+      - id
+      - user_id
+      - video_id
+      - stutter_count
+      - watch_ms
+      - created_at
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        user_id:
+          type: integer
+          minimum: 0
+        video_id:
+          type: integer
+          minimum: 1
+        first_frame_ms:
+          type: integer
+          minimum: 0
+        stutter_count:
+          type: integer
+          minimum: 0
+        watch_ms:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
     Message:
       type: object
       required:

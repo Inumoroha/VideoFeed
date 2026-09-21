@@ -16,7 +16,7 @@
 | 治理 | 审核 | [review.md](review.md) | 规划中 |
 | 治理 | 后台运营 | [admin.md](admin.md) | 规划中 |
 | 体验 | 消息 | [message.md](message.md) | 已实现 |
-| 体验 | 播放优化 | [playback.md](playback.md) | 规划中 |
+| 体验 | 播放优化 | [playback.md](playback.md) | 已实现（配置、预加载、QoS） |
 | 稳定性 | 系统治理 | [governance.md](governance.md) | 规划中 |
 | 稳定性 | 监控告警 | [monitoring.md](monitoring.md) | 规划中 |
 

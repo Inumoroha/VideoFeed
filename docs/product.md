@@ -10,7 +10,7 @@ VideoFeed 是一个短视频 Feed 系统，目标是用最小可行架构承载�
 注册登录 -> 发布视频 -> 审核治理 -> Feed 分发 -> 浏览互动 -> 消息通知 -> 运营监控
 ```
 
-当前发布即上线，审核尚未实现。首发目标是让用户完成登录、发布、刷 Feed、点赞收藏评论和基础审核；消息中心已支持通知、未读状态和已读操作；后续补齐后台运营、播放优化、治理和监控。
+当前发布即上线，审核尚未实现。首发目标是让用户完成登录、发布、刷 Feed、点赞收藏评论和基础审核；消息中心已支持通知、未读状态和已读操作；播放配置、预加载及 QoS 上报已接入；后续补齐后台运营、治理和监控。
 
 ## 2. 模块地图
 
@@ -43,7 +43,7 @@ VideoFeed 是一个短视频 Feed 系统，目标是用最小可行架构承载�
 | 消息 | 已实现 | 站内通知、未读状态、批量已读、内部事件生成消息 |
 | 审核 | 规划中 | Agent 初审和人工复审 |
 | 后台运营 | 规划中 | 视频查询、审核任务、配置管理 |
-| 播放优化 | 规划中 | 播放参数、预加载、QoS |
+| 播放优化 | 已实现 | 播放参数、预加载、QoS |
 | 系统治理 | 规划中 | 限流、降级、死信重试 |
 | 监控告警 | 规划中 | 指标写入、看板、告警 |
 
@@ -101,9 +101,10 @@ P0 目标是完整跑通用户端主链路和基础稳定性链路。
 | 规划中 | 后台运营 | GET | `/api/admin/review/tasks` | 运营查审核任务 |
 | 规划中 | 后台运营 | PUT | `/api/admin/review/tasks/{taskId}/assignee` | 分配审核员 |
 | 规划中 | 后台运营 | PATCH | `/api/admin/configs/{configKey}` | 更新运营配置 |
-| 规划中 | 播放优化 | GET | `/api/playback-config` | 播放参数下发 |
-| 规划中 | 播放优化 | GET | `/api/preload-videos` | 预加载建议 |
-| 规划中 | 播放优化 | POST | `/internal/playback-qos-reports` | 播放质量上报 |
+| 已实现 | 播放优化 | GET | `/api/playback-config` | 播放参数下发 |
+| 已实现 | 播放优化 | GET | `/api/preload-videos` | 预加载建议 |
+| 已实现 | 播放优化 | POST | `/api/playback-qos-reports` | 登录用户播放质量上报 |
+| 已实现 | 播放优化 | POST | `/internal/playback-qos-reports` | 播放质量上报 |
 | 规划中 | 系统治理 | GET | `/internal/governance/degrade-switches` | 查询降级开关 |
 | 规划中 | 系统治理 | PATCH | `/api/admin/governance/degrade-switches/{key}` | 调整降级开关 |
 | 规划中 | 系统治理 | POST | `/internal/dead-letter-retries` | 死信任务重试 |
