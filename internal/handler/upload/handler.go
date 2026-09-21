@@ -446,8 +446,7 @@ func validateVideoMetadata(metadata *probeResult) error {
 
 // faststartVideo 在两分钟内无重编码重排媒体元数据，成功后替换原文件，始终清理临时文件。
 func faststartVideo(ctx context.Context, path string) error {
-	targetDir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(targetDir, "*.faststart")
+	tmp, err := createFaststartTempFile(path)
 	if err != nil {
 		return errFaststartFailed
 	}
@@ -504,4 +503,10 @@ func writeUploadProcessingError(c *gin.Context, err error) {
 		return
 	}
 	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+}
+
+// createFaststartTempFile 在原文件目录创建带 MP4 后缀的唯一临时文件，返回由调用方关闭和清理的句柄。
+func createFaststartTempFile(path string) (*os.File, error) {
+	targetDir := filepath.Dir(path)
+	return os.CreateTemp(targetDir, "*.faststart.mp4")
 }
