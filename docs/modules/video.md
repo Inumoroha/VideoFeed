@@ -80,9 +80,13 @@
 
 关注分发与向量消费者部署见 [部署说明](../deployment.md)，向量覆盖与重试边界见 [文本向量模块](embedding.md)。
 
+上传对视频扩展名、内容类型、大小、时长、分辨率和编码执行校验；MP4/MOV 成功上传前执行 faststart 将播放元数据前置，具体限制见下方“上传校验与快启”。
+
 ## 5. 测试建议
 
 测试位于 `internal/application/video/service_test.go`、`internal/domain/video/video_test.go`、`internal/infrastructure/persistence/video/repository_test.go`、`internal/router/router_test.go`、`internal/handler/upload/handler_test.go`。覆盖发布及统计创建、未登录 401、可见视频详情、缺失 404、作者删除、非作者权限错误、公开作品过滤、发布幂等、上传错误；消息失败和重复投递见同包 fanout 测试。
+
+上传媒体测试位于 `internal/router/upload_api_test.go` 和 `internal/handler/upload/{metadata,validation,processor_live}_test.go`：非法媒体返回 400，已经落盘的失败文件被清理；合法 MP4/MOV 校验元数据后执行 faststart。真实媒体测试需要 ffmpeg/ffprobe，缺少工具时明确跳过。
 
 ## 6. 前端接入点
 

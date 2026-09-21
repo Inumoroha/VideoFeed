@@ -26,7 +26,7 @@ QoS 请求字段：`video_id` 必须为正数；`first_frame_ms` 可空且不得
 - `internal/infrastructure/persistence/playback` 使用 PostgreSQL/GORM 查询 `videos`，写入 `playback_config` 与 `playback_qos_log`。
 - `internal/handler/playback` 定义 DTO 和响应映射；`internal/router/playback.go` 注册四条路由。
 - `playback_config`：id、platform、network_type、preload_count、buffer_ms、updated_at；平台和网络组合唯一。
-- `playback_qos_log`：id、user_id（非空，允许 0）、video_id、first_frame_ms（可空）、stutter_count、watch_ms、idempotency_key（可空）、created_at。唯一索引 `uk_playback_user_idempotency(user_id,idempotency_key)`；保留视频时间、用户视频时间索引。
+- `playback_qos_log`：id、user_id（非空，允许 0；内部请求缺省时由应用层传入 0，模型未声明数据库 DEFAULT 0）、video_id、first_frame_ms（可空）、stutter_count、watch_ms、idempotency_key（VARCHAR(128)，可空）、created_at。唯一索引 `uk_playback_user_idempotency(user_id,idempotency_key)`；时间索引为 `idx_video_time(video_id,created_at)` 和 `idx_user_video_time(user_id,video_id,created_at)`。
 - 自动迁移复用现有事务和 PostgreSQL 咨询锁；并发上报依赖数据库唯一约束，插入失败回滚后读取首次记录，不依赖进程锁。
 
 ## 客户端与已知边界
