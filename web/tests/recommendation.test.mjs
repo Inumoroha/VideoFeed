@@ -41,7 +41,7 @@ test("匿名推荐不请求数据并显示登录入口",async()=>{
 
 test("分页串行、重复视频去重、曝光仅一次及旧响应隔离",async()=>{
  const pending=deferred();const calls=[];const session={token:"token",clearAuth(){throw Error("旧请求不得清理会话");}};
- globalThis.fetch=async(path,options={})=>{calls.push({path,options});if(path.includes("following"))return response({items:[]});if(path==="/api/video-view-events")return response({});if(path==="/api/feed/query"){const body=JSON.parse(options.body);return body.cursor?pending.promise:response({items:[item(1),item(2),item(3)],has_more:true,next_cursor:"next"});}return response({items:[item(90)],has_more:false});};
+ globalThis.fetch=async(path,options={})=>{calls.push({path,options});if(path.startsWith("/api/playback-config"))return response({preload_count:3,buffer_ms:1200});if(path.startsWith("/api/preload-videos"))return response({items:[]});if(path.includes("following"))return response({items:[]});if(path==="/api/video-view-events")return response({});if(path==="/api/feed/query"){const body=JSON.parse(options.body);return body.cursor?pending.promise:response({items:[item(1),item(2),item(3)],has_more:true,next_cursor:"next"});}return response({items:[item(90)],has_more:false});};
  let root;const navigate=()=>{};await act(async()=>{root=TestRenderer.create(React.createElement(app.FeedPage,{feedScene:"recommend",session,onNavigate:navigate}));});await flush();
  assert.equal(calls.filter(c=>c.path==="/api/feed/query").length,2);
  assert.equal(calls.filter(c=>c.path==="/api/video-view-events").length,1);
@@ -53,7 +53,7 @@ test("分页串行、重复视频去重、曝光仅一次及旧响应隔离",asy
 
 test("续页保留请求标识并拒绝重复卡片",async()=>{
  const calls=[];let page=0;
- globalThis.fetch=async(path,options={})=>{calls.push({path,options});if(path.includes("following"))return response({items:[]});if(path==="/api/video-view-events")return response({});page++;if(page===1)return response({items:[item(1)],has_more:true,next_cursor:"next"});return response({items:[item(1),item(2)],has_more:false});};
+ globalThis.fetch=async(path,options={})=>{calls.push({path,options});if(path.startsWith("/api/playback-config"))return response({preload_count:3,buffer_ms:1200});if(path.startsWith("/api/preload-videos"))return response({items:[]});if(path.includes("following"))return response({items:[]});if(path==="/api/video-view-events")return response({});page++;if(page===1)return response({items:[item(1)],has_more:true,next_cursor:"next"});return response({items:[item(1),item(2)],has_more:false});};
  let root;await act(async()=>{root=TestRenderer.create(React.createElement(app.FeedPage,{feedScene:"recommend",session:{token:"token",clearAuth(){}},onNavigate(){}}));});await flush();
  const queries=calls.filter(c=>c.path==="/api/feed/query").map(c=>JSON.parse(c.options.body));assert.equal(queries.length,2);assert.equal(queries[0].context.request_id,queries[1].context.request_id);assert.equal(calls.filter(c=>c.path==="/api/video-view-events").length,1);
  await act(async()=>root.unmount());
@@ -63,7 +63,7 @@ test("续页保留请求标识并拒绝重复卡片",async()=>{
 test("续页失败保留当前卡片且不循环重试，认证失效退出登录",async()=>{
  for(const status of [500,401]){
   let queries=0,cleared=0,navigated="";
-  globalThis.fetch=async(path)=>{if(path.includes("following"))return response({items:[]});if(path==="/api/video-view-events")return response({});queries++;return queries===1?response({items:[item(1)],has_more:true,next_cursor:"next"}):response({error:"failed"},status);};
+  globalThis.fetch=async(path)=>{if(path.startsWith("/api/playback-config"))return response({preload_count:3,buffer_ms:1200});if(path.startsWith("/api/preload-videos"))return response({items:[]});if(path.includes("following"))return response({items:[]});if(path==="/api/video-view-events")return response({});queries++;return queries===1?response({items:[item(1)],has_more:true,next_cursor:"next"}):response({error:"failed"},status);};
   let root;await act(async()=>{root=TestRenderer.create(React.createElement(app.FeedPage,{feedScene:"recommend",session:{token:"token",clearAuth(){cleared++;}},onNavigate(path){navigated=path;}}));});await flush();await flush();
   assert.equal(queries,2);assert.match(JSON.stringify(root.toJSON()),/video 1/);
   assert.equal(cleared,status===401?1:0);assert.equal(navigated,status===401?"/auth":"");
