@@ -7,6 +7,7 @@ import (
 	feedpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/feed"
 	interactionpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/interaction"
 	messagepersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/message"
+	playbackpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/playback"
 	relationpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/relation"
 	userpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/user"
 	videopersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/video"
@@ -45,6 +46,9 @@ func migrateTables(gormDB *gorm.DB) error {
 	}
 	if err := gormDB.AutoMigrate(&messagepersistence.MessageModel{}); err != nil {
 		return fmt.Errorf("migrate messages: %w", err)
+	}
+	if err := gormDB.AutoMigrate(&playbackpersistence.ConfigModel{}, &playbackpersistence.QoSLogModel{}); err != nil {
+		return fmt.Errorf("migrate playback: %w", err)
 	}
 	if err := gormDB.AutoMigrate(&feedpersistence.InboxModel{}); err != nil {
 		return fmt.Errorf("migrate feed inbox: %w", err)
