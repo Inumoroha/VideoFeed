@@ -35,3 +35,5 @@
 - [83ef498：同步播放与上传实现状态文档](migration-83ef498.md)
 
 - [7a254df：快启临时文件格式与固定编码名单测试](migration-7a254df.md)
+
+- [169a120：放宽主部署 RabbitMQ 健康检查超时](migration-169a120.md)

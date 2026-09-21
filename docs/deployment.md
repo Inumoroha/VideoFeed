@@ -18,6 +18,8 @@ worker 读取 `./configs/config.yaml`，要求 RabbitMQ URL、Redis 地址非空
 
 ## Docker Compose
 
+主部署文件 `docker-compose.yaml` 的 RabbitMQ 健康检查使用 `rabbitmq-diagnostics -q ping`，间隔 5 秒、单次超时 30 秒、重试 20 次；API 和 worker 仍等待其健康后启动。
+
 ```bash
 docker compose config --quiet
 docker compose up -d --build
