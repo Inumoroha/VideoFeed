@@ -63,6 +63,7 @@ services:
             - "9000:9000"
         environment:
             DATABASE_URL: postgres://postgres:video_feed_dev@postgres:5432/video_feed?sslmode=disable
+            INTERNAL_TOKEN: ${INTERNAL_TOKEN:-}
             # 本地开发默认值；部署时可通过环境变量覆盖。
             JWT_SECRET: ${JWT_SECRET:-local-dev-secret-change-before-deployment-2026}
         volumes:

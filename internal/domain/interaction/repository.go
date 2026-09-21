@@ -10,3 +10,10 @@ type Repository interface {
 	ListComments(ctx context.Context, videoID int64, cursor *CommentCursor, limit int) ([]*Comment, error)
 	DeleteComment(ctx context.Context, commentID int64, userID int64, role string) (*Comment, int, error)
 }
+
+// NotificationRepository 为通知提供视频作者和事务内实际变化量，重放返回零变化量。
+type NotificationRepository interface {
+	GetVideoAuthorID(context.Context, int64) (int64, error)
+	SetActionWithDelta(context.Context, int64, int64, string, bool, string) (*Action, int, int, int, error)
+	CreateCommentWithDelta(context.Context, *Comment) (*Comment, int, int, error)
+}

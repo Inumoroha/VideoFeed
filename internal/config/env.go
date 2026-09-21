@@ -16,6 +16,7 @@ var environmentBindings = []struct {
 	env string
 }{
 	{key: "server.port", env: "SERVER_PORT"},
+	{key: "internal.token", env: "INTERNAL_TOKEN"},
 	{key: "rabbitmq.video_embedding_queue", env: "RABBITMQ_VIDEO_EMBEDDING_QUEUE"},
 	{key: "rabbitmq.exposure_exchange", env: "RABBITMQ_EXPOSURE_EXCHANGE"},
 	{key: "rabbitmq.view_event_recorded_queue", env: "RABBITMQ_VIEW_EVENT_RECORDED_QUEUE"},

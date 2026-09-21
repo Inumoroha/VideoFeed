@@ -4,6 +4,7 @@ import "time"
 
 // Config 保存应用运行所需的全部配置项。
 type Config struct {
+	Internal InternalConfig `mapstructure:"internal"`
 	App      AppConfig      `mapstructure:"app"`
 	Server   ServerConfig   `mapstructure:"server"`
 	Database DatabaseConfig `mapstructure:"database"`
@@ -68,4 +69,9 @@ type RabbitMQConfig struct {
 	InteractionExchange      string `mapstructure:"interaction_exchange"`
 	ActionChangedQueue       string `mapstructure:"action_changed_queue"`
 	ActionChangedRouting     string `mapstructure:"action_changed_routing"`
+}
+
+// InternalConfig 保存内部消息接口的独立鉴权令牌，空值禁止调用。
+type InternalConfig struct {
+	Token string `mapstructure:"token"`
 }

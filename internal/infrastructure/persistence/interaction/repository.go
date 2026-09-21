@@ -51,6 +51,21 @@ func (r *Repository) GetVideoStat(ctx context.Context, videoID int64) (*domainin
 
 // SetAction 设置用户对已发布视频的点赞或收藏状态，并持久化首次幂等结果和统计快照。
 func (r *Repository) SetAction(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string) (*domaininteraction.Action, int, int, error) {
+	return r.setAction(ctx, userID, videoID, actionType, active, idempotencyKey, nil)
+}
+
+// SetActionWithDelta 保留互动写入行为，并返回事务内变化量；幂等重放或失败时为零。
+func (r *Repository) SetActionWithDelta(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string) (*domaininteraction.Action, int, int, int, error) {
+	delta := 0
+	action, likes, favorites, err := r.setAction(ctx, userID, videoID, actionType, active, idempotencyKey, &delta)
+	if err != nil {
+		delta = 0
+	}
+	return action, likes, favorites, delta, err
+}
+
+// setAction 在原有事务和唯一约束下写入互动，可选返回成功状态转换的变化量。
+func (r *Repository) setAction(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string, changed *int) (*domaininteraction.Action, int, int, error) {
 	if err := r.validateRepository(); err != nil {
 		return nil, 0, 0, err
 	}
@@ -136,6 +151,9 @@ func (r *Repository) SetAction(ctx context.Context, userID int64, videoID int64,
 			}
 		}
 
+		if changed != nil {
+			*changed = delta
+		}
 		if _, err = updateActionStat(tx, videoID, actionType, delta); err != nil {
 			return err
 		}
@@ -160,6 +178,9 @@ func (r *Repository) SetAction(ctx context.Context, userID int64, videoID int64,
 	})
 	if err != nil {
 		if idempotencyKey != "" && isDuplicateKeyError(err) {
+			if changed != nil {
+				*changed = 0
+			}
 			return r.loadActionIdempotencyResult(ctx, userID, actionType, idempotencyKey)
 		}
 		return nil, 0, 0, mapVideoError(err)
@@ -192,6 +213,18 @@ func (r *Repository) GetActionCounts(ctx context.Context, videoID int64) (int, i
 
 // CreateComment 创建评论并在同一事务中增加视频评论统计。
 func (r *Repository) CreateComment(ctx context.Context, comment *domaininteraction.Comment) (*domaininteraction.Comment, int, error) {
+	return r.createComment(ctx, comment, nil)
+}
+
+// CreateCommentWithDelta 返回评论和实际新增量，唯一约束冲突重放不触发通知。
+func (r *Repository) CreateCommentWithDelta(ctx context.Context, comment *domaininteraction.Comment) (*domaininteraction.Comment, int, int, error) {
+	delta := 0
+	created, count, err := r.createComment(ctx, comment, &delta)
+	return created, count, delta, err
+}
+
+// createComment 在事务内保存评论和计数，重复请求读取原评论，成功新增后设置变化量。
+func (r *Repository) createComment(ctx context.Context, comment *domaininteraction.Comment, changed *int) (*domaininteraction.Comment, int, error) {
 	if err := r.validateRepository(); err != nil {
 		return nil, 0, err
 	}
@@ -237,6 +270,9 @@ func (r *Repository) CreateComment(ctx context.Context, comment *domaininteracti
 	created, err := r.FindCommentByID(ctx, model.ID)
 	if err != nil {
 		return nil, 0, err
+	}
+	if changed != nil {
+		*changed = 1
 	}
 	return created, count, nil
 }
@@ -630,3 +666,18 @@ func isDuplicateKeyError(err error) bool {
 }
 
 var _ domaininteraction.Repository = (*Repository)(nil)
+
+// GetVideoAuthorID 读取公开视频作者 ID，用于互动消息通知。
+func (r *Repository) GetVideoAuthorID(ctx context.Context, videoID int64) (int64, error) {
+	var video infravideo.VideoModel
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND status = ?", videoID, domainvideo.StatusPublished).
+		Take(&video).
+		Error
+	if err != nil {
+		return 0, mapVideoError(err)
+	}
+	return video.AuthorID, nil
+}
+
+var _ domaininteraction.NotificationRepository = (*Repository)(nil)
