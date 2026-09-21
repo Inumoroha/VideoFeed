@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	domainmessage "github.com/inumoroha/video-feed/internal/domain/message"
 	"strings"
 	"time"
 
@@ -19,10 +20,11 @@ const hotScoreLikeWeight = 3
 const hotScoreFavoriteWeight = 4
 const hotScoreCommentWeight = 5
 
-// Service 编排点赞、收藏和评论相关的应用用例。
+// Service 编排点赞、收藏和评论用例，并在实际新增互动后尽力通知作者。
 type Service struct {
-	repo     domaininteraction.Repository
-	hotCache interface {
+	messageWriter MessageWriter
+	repo          domaininteraction.Repository
+	hotCache      interface {
 		AddHotScore(context.Context, int64, int, time.Time) error
 	}
 	actionStateStore ActionStateStore
@@ -117,7 +119,7 @@ func (s *Service) Unfavorite(ctx context.Context, userID int64, videoID int64, i
 	return s.setAction(ctx, userID, videoID, domaininteraction.ActionTypeFavorite, false, idempotencyKey)
 }
 
-// CreateComment 校验参数、处理幂等重试并创建视频评论。
+// CreateComment 校验并幂等创建评论，仅对实际新增评论尽力通知作者，通知失败不影响结果。
 func (s *Service) CreateComment(ctx context.Context, userID int64, videoID int64, content string, idempotencyKey string) (*CreateCommentResult, error) {
 	if !s.ready() {
 		return nil, ErrInteractionServiceNotInitialized
@@ -142,7 +144,13 @@ func (s *Service) CreateComment(ctx context.Context, userID int64, videoID int64
 		}
 	}
 
-	created, count, err := s.repo.CreateComment(ctx, comment)
+	var created *domaininteraction.Comment
+	var count, delta int
+	if repo, ok := s.repo.(domaininteraction.NotificationRepository); ok {
+		created, count, delta, err = repo.CreateCommentWithDelta(ctx, comment)
+	} else {
+		created, count, err = s.repo.CreateComment(ctx, comment)
+	}
 	if err != nil {
 		if isExpectedDomainError(err) {
 			return nil, err
@@ -156,6 +164,9 @@ func (s *Service) CreateComment(ctx context.Context, userID int64, videoID int64
 		_ = s.hotCache.AddHotScore(ctx, created.VideoID, hotScoreCommentWeight, time.Now().UTC())
 	}
 
+	if delta > 0 {
+		s.notifyComment(ctx, created)
+	}
 	return &CreateCommentResult{Comment: created, CommentCount: count}, nil
 }
 
@@ -238,7 +249,7 @@ func (s *Service) DeleteComment(ctx context.Context, commentID int64, userID int
 	}, nil
 }
 
-// setAction 将指定类型的互动设置为目标 active 状态，并将仓储结果转换为应用结果。
+// setAction 编排同步或异步互动，发布失败回退数据库；成功新增点赞后尽力通知，保留原有状态和计数结果。
 func (s *Service) setAction(ctx context.Context, userID int64, videoID int64, actionType string, active bool, idempotencyKey string) (*ActionResult, error) {
 	if !s.ready() {
 		return nil, ErrInteractionServiceNotInitialized
@@ -285,17 +296,20 @@ func (s *Service) setAction(ctx context.Context, userID int64, videoID int64, ac
 				_ = s.hotCache.AddHotScore(ctx, videoID, weight, time.Now().UTC())
 			}
 			if e = s.actionPublisher.PublishActionChanged(ctx, NewActionChangedEvent(userID, videoID, actionType, active, idempotencyKey)); e != nil {
-				action, likeCount, favoriteCount, syncErr := s.repo.SetAction(ctx, userID, videoID, actionType, active, idempotencyKey)
+				action, likeCount, favoriteCount, syncErr := s.setActionAndNotify(ctx, userID, videoID, actionType, active, idempotencyKey)
 				if syncErr != nil || action == nil {
 					return nil, ErrUpdateInteractionFailed
 				}
 				return &ActionResult{VideoID: action.VideoID, ActionType: action.ActionType, Active: action.Active(), LikeCount: likeCount, FavoriteCount: favoriteCount}, nil
 			}
+			if state.ActionType == domaininteraction.ActionTypeLike && state.Active && state.Delta > 0 {
+				s.notifyLike(ctx, &domaininteraction.Action{UserID: userID, VideoID: state.VideoID, ActionType: state.ActionType, Status: domaininteraction.ActionStatusActive})
+			}
 		}
 		return &ActionResult{VideoID: state.VideoID, ActionType: state.ActionType, Active: state.Active, LikeCount: state.LikeCount, FavoriteCount: state.FavoriteCount}, nil
 	}
 
-	action, likeCount, favoriteCount, err := s.repo.SetAction(ctx, userID, videoID, actionType, active, idempotencyKey)
+	action, likeCount, favoriteCount, err := s.setActionAndNotify(ctx, userID, videoID, actionType, active, idempotencyKey)
 	if err != nil {
 		if isExpectedDomainError(err) {
 			return nil, err
@@ -405,4 +419,78 @@ func isExpectedDomainError(err error) bool {
 		errors.Is(err, domaininteraction.ErrVideoNotFound) ||
 		errors.Is(err, domaininteraction.ErrCommentNotFound) ||
 		errors.Is(err, domaininteraction.ErrCommentPermissionDenied)
+}
+
+// MessageWriter 写入互动触发的站内消息。
+type MessageWriter interface {
+	CreateFromEvent(ctx context.Context, userID int64, messageType string, title string, content string, eventID string, idempotencyKey string) (any, error)
+}
+
+// WithMessageWriter 为点赞和评论成功后的通知写入启用消息中心。
+func WithMessageWriter(writer MessageWriter) func(*Service) {
+	return func(s *Service) {
+		s.messageWriter = writer
+	}
+}
+
+// notifyLike 查询视频作者并尽力写入点赞通知，自赞和查询失败时跳过。
+func (s *Service) notifyLike(ctx context.Context, action *domaininteraction.Action) {
+	if s.messageWriter == nil || action == nil {
+		return
+	}
+	provider, ok := s.repo.(domaininteraction.NotificationRepository)
+	if !ok {
+		return
+	}
+	authorID, err := provider.GetVideoAuthorID(ctx, action.VideoID)
+	if err != nil || authorID == action.UserID {
+		return
+	}
+	eventID := fmt.Sprintf("interaction:like:%d:%d", action.VideoID, action.UserID)
+	_, _ = s.messageWriter.CreateFromEvent(
+		ctx,
+		authorID,
+		domainmessage.TypeLike,
+		"收到点赞",
+		fmt.Sprintf("用户 %d 点赞了你的视频 %d", action.UserID, action.VideoID),
+		eventID,
+		eventID,
+	)
+}
+
+// notifyComment 查询视频作者并尽力写入评论通知，自评和查询失败时跳过。
+func (s *Service) notifyComment(ctx context.Context, comment *domaininteraction.Comment) {
+	if s.messageWriter == nil || comment == nil {
+		return
+	}
+	provider, ok := s.repo.(domaininteraction.NotificationRepository)
+	if !ok {
+		return
+	}
+	authorID, err := provider.GetVideoAuthorID(ctx, comment.VideoID)
+	if err != nil || authorID == comment.UserID {
+		return
+	}
+	eventID := fmt.Sprintf("interaction:comment:%d", comment.ID)
+	_, _ = s.messageWriter.CreateFromEvent(
+		ctx,
+		authorID,
+		domainmessage.TypeComment,
+		"收到评论",
+		fmt.Sprintf("用户 %d 评论了你的视频 %d", comment.UserID, comment.VideoID),
+		eventID,
+		eventID,
+	)
+}
+
+// setActionAndNotify 使用兼容仓储取得事务变化量，仅对新增有效点赞尽力写入通知。
+func (s *Service) setActionAndNotify(ctx context.Context, userID, videoID int64, actionType string, active bool, key string) (*domaininteraction.Action, int, int, error) {
+	if repo, ok := s.repo.(domaininteraction.NotificationRepository); ok {
+		action, likes, favorites, delta, err := repo.SetActionWithDelta(ctx, userID, videoID, actionType, active, key)
+		if err == nil && action != nil && action.ActionType == domaininteraction.ActionTypeLike && action.Active() && delta > 0 {
+			s.notifyLike(ctx, action)
+		}
+		return action, likes, favorites, err
+	}
+	return s.repo.SetAction(ctx, userID, videoID, actionType, active, key)
 }

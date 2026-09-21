@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	domainmessage "github.com/inumoroha/video-feed/internal/domain/message"
 	"strings"
 	"time"
 
@@ -13,10 +15,11 @@ import (
 
 const defaultListLimit = 20
 
-// Service 编排用户关系用例：关注、取关、关注列表和粉丝列表。
+// Service 编排关系用例、关注流回填和成功关注后的尽力通知。
 type Service struct {
-	repo       domainrelation.Repository
-	backfiller FollowFeedBackfiller
+	messageWriter MessageWriter
+	repo          domainrelation.Repository
+	backfiller    FollowFeedBackfiller
 }
 
 // listCursorPayload 保存关系分页游标的编码字段。
@@ -98,7 +101,7 @@ func (s *Service) ListFollowers(ctx context.Context, userID int64, cursor string
 	return listResult(items, limit), nil
 }
 
-// setFollow 保存关注或取关状态；关注成功后同步回填，回填失败返回错误但不撤销已保存关系。
+// setFollow 保存关系并同步回填；回填失败返回错误但不撤销关系，成功后尽力通知且忽略通知失败。
 func (s *Service) setFollow(ctx context.Context, userID int64, targetUserID int64, active bool, idempotencyKey string) (*FollowResult, error) {
 	if !s.ready() {
 		return nil, ErrRelationServiceNotInitialized
@@ -124,6 +127,7 @@ func (s *Service) setFollow(ctx context.Context, userID int64, targetUserID int6
 		if err := s.backfillFollowFeed(ctx, userID, targetUserID); err != nil {
 			return nil, ErrBackfillFollowFeedFailed
 		}
+		s.notifyFollow(ctx, userID, targetUserID)
 	}
 	return &FollowResult{
 		UserID:         follow.UserID,
@@ -232,4 +236,33 @@ func isExpectedDomainError(err error) bool {
 		errors.Is(err, domainrelation.ErrUserNotFound) ||
 		errors.Is(err, domainrelation.ErrTargetUserNotFound) ||
 		errors.Is(err, domainrelation.ErrFollowNotFound)
+}
+
+// MessageWriter 写入关注触发的站内消息。
+type MessageWriter interface {
+	CreateFromEvent(ctx context.Context, userID int64, messageType string, title string, content string, eventID string, idempotencyKey string) (any, error)
+}
+
+// WithMessageWriter 为关注成功后的通知写入启用消息中心。
+func WithMessageWriter(writer MessageWriter) Option {
+	return func(s *Service) {
+		s.messageWriter = writer
+	}
+}
+
+// notifyFollow 尽力写入关注通知，使用固定事件标识保证消息幂等，不传播写入错误。
+func (s *Service) notifyFollow(ctx context.Context, userID int64, targetUserID int64) {
+	if s.messageWriter == nil {
+		return
+	}
+	eventID := fmt.Sprintf("relation:follow:%d:%d", targetUserID, userID)
+	_, _ = s.messageWriter.CreateFromEvent(
+		ctx,
+		targetUserID,
+		domainmessage.TypeFollow,
+		"新增关注",
+		fmt.Sprintf("用户 %d 关注了你", userID),
+		eventID,
+		eventID,
+	)
 }

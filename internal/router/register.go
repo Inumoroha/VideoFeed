@@ -3,10 +3,13 @@ package router
 import (
 	"fmt"
 	applicationexposure "github.com/inumoroha/video-feed/internal/application/exposure"
+	applicationmessage "github.com/inumoroha/video-feed/internal/application/message"
 	applicationrecommendation "github.com/inumoroha/video-feed/internal/application/recommendation"
 	exposurehandler "github.com/inumoroha/video-feed/internal/handler/exposure"
+	messagehandler "github.com/inumoroha/video-feed/internal/handler/message"
 	recommendationhandler "github.com/inumoroha/video-feed/internal/handler/recommendation"
 	exposurepersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/exposure"
+	messagepersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/message"
 	recommendationpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/recommendation"
 	"log"
 	"path/filepath"
@@ -79,7 +82,9 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	feedService := applicationfeed.NewService(feedRepository, feedOptions...)
 	feedHandler := feedhandler.NewHandler(feedService)
 	interactionRepository := interactionpersistence.New(gormDB)
-	interactionOptions := []func(*applicationinteraction.Service){}
+	messageService := applicationmessage.New(messagepersistence.New(gormDB))
+	messageWriter := NewMessageWriter(messageService)
+	interactionOptions := []func(*applicationinteraction.Service){applicationinteraction.WithMessageWriter(messageWriter)}
 	if feedCache != nil {
 		interactionOptions = append(interactionOptions, applicationinteraction.WithHotScoreCache(feedCache))
 	}
@@ -102,7 +107,7 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	interactionService := applicationinteraction.NewService(interactionRepository, interactionOptions...)
 	interactionHandler := interactionhandler.NewHandler(interactionService)
 	relationRepository := relationpersistence.New(gormDB)
-	relationOptions := []applicationrelation.Option{}
+	relationOptions := []applicationrelation.Option{applicationrelation.WithMessageWriter(messageWriter)}
 	if feedCache != nil {
 		relationOptions = append(relationOptions, applicationrelation.WithFollowFeedBackfiller(NewFollowFeedBackfiller(feedRepository, feedCache)))
 	}
@@ -119,6 +124,7 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	registerRoutes(g, userHandler, videoHandler, feedHandler, uploadHandler, jwtManager, interactionHandler, relationHandler, exposureHandler)
 	registerRelationRoutes(g, jwtManager, relationHandler)
 	registerRecommendationRoutes(g, recommendationhandler.New(recommendationService))
+	registerMessageRoutes(g, jwtManager, messagehandler.New(messageService), cfg.Internal.Token)
 
 	return nil
 }
