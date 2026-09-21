@@ -71,3 +71,9 @@ python -B scripts/verify_exposure_live.py --embedding --output docs/worker-embed
 ```
 
 真实联调脚本创建独立 Docker 项目、随机本机端口和临时 API/worker 进程，并清理全部测试资源。Windows 脚本停止进程使用操作系统终止；Linux 容器的 SIGTERM 行为单独验证。结果和限制见 [迁移审计](migration-1019a792.md)。
+
+## 消息中心内部调用
+
+消息创建接口 `POST /internal/messages` 使用独立 `X-Internal-Token`。本地配置和 Compose 默认为空，默认拒绝内部创建请求。部署时设置 `INTERNAL_TOKEN`；Kubernetes 在 `deploy.yaml` 的 Secret 字段 `internal-token` 中填写，API 通过环境变量读取。不要将其传到 Web 客户端。用户消息查询、已读和互动触发通知仍可正常工作，不要求配置该令牌。
+
+消息存储复用 PostgreSQL 和现有迁移咨询锁，不新增数据库、数据卷、队列或健康检查。API/worker 启动会迁移 `user_message`；消息通知由 API 写入，worker 无需内部令牌。端口仍为 API 9000、PostgreSQL 宿主机 5433。详见 [消息模块](modules/message.md) 和 [迁移审计](migration-7a62b5c.md)。

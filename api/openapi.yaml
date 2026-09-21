@@ -6,6 +6,195 @@ servers:
   - url: /
     description: Current API server
 paths:
+  /api/messages:
+    get:
+      tags:
+      - Message
+      summary: 分页查询当前用户消息
+      operationId: listMessages
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: cursor
+        in: query
+        schema:
+          type: string
+        description: 创建时间和消息 ID 的 Base64 游标，支持 URL 安全无填充及标准编码。
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          default: 20
+        description: 大于 100 时按 100 查询。
+      responses:
+        '200':
+          description: 消息按创建时间、ID 倒序返回
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageList'
+              example:
+                items:
+                - &message_path_003
+                  id: 1
+                  user_id: 42
+                  type: LIKE
+                  title: 收到点赞
+                  content: 用户 77 点赞了你的视频 1001
+                  event_id: interaction:like:1001:77
+                  is_read: false
+                  created_at: '2026-09-21T00:00:00Z'
+                next_cursor: eyJjcmVhdGVkX2F0IjoiMjAyNi0wOS0yMVQwMDowMDowMFoiLCJtZXNzYWdlX2lkIjoxfQ
+                has_more: false
+        '400':
+          description: cursor is invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: cursor is invalid
+        '401': &message_path_001
+          description: invalid access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid access token
+        '500': &message_path_002
+          description: internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
+    patch:
+      tags:
+      - Message
+      summary: 标记当前用户消息为已读
+      operationId: markMessagesRead
+      security:
+      - bearerAuth: []
+      description: 忽略不存在或属于其他用户的 ID，去重并仅更新未读消息。省略、null 或空 message_ids 表示全部已读；重复操作更新数量为零。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkMessagesReadRequest'
+            example:
+              message_ids:
+              - 1
+              - 3
+              - 3
+      responses:
+        '200':
+          description: 实际更新数量
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarkMessagesReadResult'
+              example:
+                updated_count: 2
+        '400':
+          description: message id must be positive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: message id must be positive
+        '401': *message_path_001
+        '500': *message_path_002
+  /api/message-stats/unread:
+    get:
+      tags:
+      - Message
+      summary: 查询当前用户未读消息数
+      operationId: countUnreadMessages
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: 未读数量
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnreadMessageStat'
+              example:
+                unread_count: 3
+        '401': *message_path_001
+        '500': *message_path_002
+  /internal/messages:
+    post:
+      tags:
+      - Message
+      summary: 由内部事件创建消息
+      operationId: createMessage
+      security:
+      - internalToken: []
+      description: 令牌为空时拒绝全部调用。消息类型去除空白并转为大写；文本去除首尾空白后按 UTF-8 字节校验。接收用户 ID 只要求正数，不查询用户存在性。同一用户事件
+        ID 或幂等键命中时返回原消息。两键均空时每次新增。
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        schema:
+          type: string
+        description: 去除首尾空白后最多 128 个 UTF-8 字节。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMessageRequest'
+            example:
+              user_id: 42
+              type: like
+              title: 收到点赞
+              content: 你的作品收到点赞
+              event_id: evt-example
+      responses:
+        '201':
+          description: 创建新消息
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+              example: *message_path_003
+        '200':
+          description: 幂等返回原消息
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+              example: *message_path_003
+        '400':
+          description: message type is invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: message type is invalid
+        '401':
+          description: invalid internal token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid internal token
+        '500':
+          description: internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: internal server error
   /api/relations/{targetUserId}:
     put:
       tags:
@@ -1548,11 +1737,117 @@ components:
       description: URL-safe Base64 cursor returned by the previous feed page. Timeline and following cursors contain publication time and video ID; hot cursors depend on the active ranking strategy. Invalid timeline/hot/following cursors return 400; invalid recommendation cursors return 500 through the existing Feed error mapping.
 
   securitySchemes:
+    internalToken:
+      type: apiKey
+      in: header
+      name: X-Internal-Token
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    Message:
+      type: object
+      required:
+      - id
+      - user_id
+      - type
+      - title
+      - content
+      - is_read
+      - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        type:
+          type: string
+          enum:
+          - LIKE
+          - COMMENT
+          - FOLLOW
+          - SYSTEM
+        title:
+          type: string
+        content:
+          type: string
+        event_id:
+          type: string
+        is_read:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        read_at:
+          type: string
+          format: date-time
+    MessageList:
+      type: object
+      required:
+      - items
+      - next_cursor
+      - has_more
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        next_cursor:
+          type: string
+        has_more:
+          type: boolean
+    MarkMessagesReadRequest:
+      type: object
+      nullable: true
+      properties:
+        message_ids:
+          type: array
+          nullable: true
+          items:
+            type: integer
+            format: int64
+            minimum: 1
+    MarkMessagesReadResult:
+      type: object
+      required:
+      - updated_count
+      properties:
+        updated_count:
+          type: integer
+    UnreadMessageStat:
+      type: object
+      required:
+      - unread_count
+      properties:
+        unread_count:
+          type: integer
+    CreateMessageRequest:
+      type: object
+      required:
+      - user_id
+      - type
+      - title
+      - content
+      properties:
+        user_id:
+          type: integer
+          format: int64
+          minimum: 1
+        type:
+          type: string
+          description: 去除首尾空白并忽略大小写后为 LIKE、COMMENT、FOLLOW 或 SYSTEM。
+        title:
+          type: string
+          description: 去除首尾空白后非空，最多 128 个 UTF-8 字节。
+        content:
+          type: string
+          description: 去除首尾空白后非空，最多 1024 个 UTF-8 字节。
+        event_id:
+          type: string
+          description: 可空，去除首尾空白后最多 64 个 UTF-8 字节。
     RecommendationExposureDecisionsRequest:
       type: object
       required:

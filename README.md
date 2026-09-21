@@ -10,6 +10,7 @@ VideoFeed 是一个面向短视频场景的 Feed 系统工程。项目用 Go API
 - Gin HTTP 服务入口和 REST API 路由。
 - PostgreSQL + GORM 持久化。
 - JWT 登录态。
+- 消息中心后端：消息列表、未读计数、已读更新及点赞/评论/关注通知，详见 [消息模块](docs/modules/message.md)。
 - Redis Feed 缓存、热榜和互动计数。
 - RabbitMQ 异步互动落库、视频发布事件和向量任务。
 - React + Vite Web 客户端。
@@ -17,7 +18,6 @@ VideoFeed 是一个面向短视频场景的 Feed 系统工程。项目用 Go API
 
 重点待补能力：
 
-- 消息中心。
 - 审核后台。
 - 后台运营。
 - 播放优化。

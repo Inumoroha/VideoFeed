@@ -17,3 +17,5 @@
 - [migration-cafc119](migration-cafc119.md)
 - [migration-f986e1d](migration-f986e1d.md)
 - [migration-fa476283](migration-fa476283.md)
+
+- [7a62b5c：消息中心后端、通知与内部鉴权](migration-7a62b5c.md)
