@@ -4,6 +4,13 @@ const TOKEN_KEY = "videofeed.accessToken";
 const USER_KEY = "videofeed.user";
 const PUBLIC_PROFILE_KEY = "videofeed.publicProfiles";
 const FEED_TRANSITION_MS = 320;
+const DEFAULT_PLAYBACK_CONFIG = {
+    platform: "Web",
+    network_type: "DEFAULT",
+    preload_count: 3,
+    buffer_ms: 1200
+};
+
 const FEED_SCENES = [
     { key: "recommend", label: "推荐流", route: "/recommend", icon: "auto_awesome" },
     {
@@ -506,7 +513,7 @@ function TopNav({ user, authenticated, unreadCount, onNavigate, onLogout }) {
     );
 }
 
-// FeedPage 加载并续页四类视频流，上报当前视频曝光，处理登录提示和播放互动并隔离过期请求。
+// FeedPage 展示信息流并管理分页、预加载配置和播放质量上报。
 function FeedPage({ feedScene, session, onNavigate }) {
     const [items, setItems] = useState([]);
     const [index, setIndex] = useState(0);
@@ -525,6 +532,7 @@ function FeedPage({ feedScene, session, onNavigate }) {
     const [nextCursor, setNextCursor] = useState("");
     const [hasMore, setHasMore] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
+    const [playbackConfig, setPlaybackConfig] = useState(DEFAULT_PLAYBACK_CONFIG);
     const [feedRequestID, setFeedRequestID] = useState("");
     const [swipe, setSwipe] = useState(null);
     const wheelLocked = useRef(false);
@@ -535,6 +543,7 @@ function FeedPage({ feedScene, session, onNavigate }) {
     const loadingMoreRef = useRef(false);
     const feedRequestIDRef = useRef("");
     const exposedRef = useRef(new Set());
+    const preloadedVideoRef = useRef(new Set());
     const feedGenerationRef = useRef(0);
     const currentFeedScene =
         FEED_SCENES.find((scene) => scene.key === feedScene) || FEED_SCENES[0];
@@ -665,6 +674,35 @@ function FeedPage({ feedScene, session, onNavigate }) {
     }, [loadFeed]);
 
     useEffect(() => {
+        if (!session.token) {
+            setPlaybackConfig(DEFAULT_PLAYBACK_CONFIG);
+            preloadedVideoRef.current = new Set();
+            return undefined;
+        }
+
+        let live = true;
+        fetchPlaybackConfig(session.token)
+            .then((config) => {
+                if (live) {
+                    setPlaybackConfig(normalizePlaybackConfig(config));
+                }
+            })
+            .catch((error) => {
+                if (error.status === 401) {
+                    session.clearAuth();
+                    onNavigate("/auth");
+                    return;
+                }
+                if (live) {
+                    setPlaybackConfig(DEFAULT_PLAYBACK_CONFIG);
+                }
+            });
+        return () => {
+            live = false;
+        };
+    }, [onNavigate, session.clearAuth, session.token]);
+
+    useEffect(() => {
         if (feedState === "ready" && items.length > 0 && index >= items.length - 3) {
             loadMoreFeed();
         }
@@ -729,6 +767,51 @@ function FeedPage({ feedScene, session, onNavigate }) {
             }
         });
     }, [current, feedRequestID, feedScene, feedState, onNavigate, session]);
+
+    useEffect(() => {
+        if (!current || feedState !== "ready" || !session.token) return undefined;
+        let live = true;
+        fetchPreloadVideos(session.token, current.video_id, playbackConfig.preload_count)
+            .then((data) => {
+                if (!live) return;
+                prewarmVideoAssets(data.items || [], preloadedVideoRef.current);
+            })
+            .catch((error) => {
+                if (error.status === 401 && requiresAuthFeed(feedScene)) {
+                    session.clearAuth();
+                    onNavigate("/auth");
+                }
+            });
+        return () => {
+            live = false;
+        };
+    }, [current?.video_id, feedScene, feedState, onNavigate, playbackConfig.preload_count, session.clearAuth, session.token]);
+
+    // reportPlaybackQoS 为登录用户发送带幂等键的质量报告，认证失败时退出登录。
+    const reportPlaybackQoS = useCallback(
+        (item, metrics) => {
+            if (!session.token || !item?.video_id) return;
+            const payload = buildPlaybackQoSPayload(metrics);
+            if (!payload) return;
+            apiRequest("/api/playback-qos-reports", {
+                method: "POST",
+                token: session.token,
+                headers: {
+                    "Idempotency-Key": createPlaybackQoSKey(item, metrics)
+                },
+                body: {
+                    video_id: item.video_id,
+                    ...payload
+                }
+            }).catch((error) => {
+                if (error.status === 401) {
+                    session.clearAuth();
+                    onNavigate("/auth");
+                }
+            });
+        },
+        [onNavigate, session.clearAuth, session.token]
+    );
 
     const requireLogin = useCallback(() => {
         if (session.token) return true;
@@ -1162,6 +1245,8 @@ function FeedPage({ feedScene, session, onNavigate }) {
                                 <div className="feed-stage-layer">
                                     <VideoStage
                                         item={visibleNext}
+                                        active={false}
+                                        onPlaybackQoS={reportPlaybackQoS}
                                         liked={Boolean(
                                             liked[visibleNext.video_id],
                                         )}
@@ -1196,6 +1281,8 @@ function FeedPage({ feedScene, session, onNavigate }) {
                             <div className="feed-stage-layer">
                                 <VideoStage
                                     item={visibleCurrent}
+                                    active={!swipe}
+                                    onPlaybackQoS={reportPlaybackQoS}
                                     liked={Boolean(
                                         liked[visibleCurrent.video_id],
                                     )}
@@ -1227,6 +1314,8 @@ function FeedPage({ feedScene, session, onNavigate }) {
                                 <div className="feed-stage-layer">
                                     <VideoStage
                                         item={visibleNext}
+                                        active={false}
+                                        onPlaybackQoS={reportPlaybackQoS}
                                         liked={Boolean(
                                             liked[visibleNext.video_id],
                                         )}
@@ -1295,8 +1384,11 @@ function FeedMessage({ icon, title, action, onAction }) {
     );
 }
 
+// VideoStage 控制当前视频播放并在暂停、切换和卸载时上报质量指标。
 function VideoStage({
     item,
+    active,
+    onPlaybackQoS,
     liked,
     favorited,
     following,
@@ -1312,6 +1404,81 @@ function VideoStage({
     const cover = item.cover_url || image.stage;
     const media = item.media_url || cover;
     const showVideo = isVideoSource(media);
+    const videoRef = useRef(null);
+    const itemRef = useRef(item);
+    const qosRef = useRef(createVideoQoSState(item.video_id));
+
+    useEffect(() => {
+        itemRef.current = item;
+    }, [item]);
+
+    // flushQoS 提交当前观看片段并重置指标，未开始播放时不提交。
+    const flushQoS = useCallback(() => {
+        const state = qosRef.current;
+        if (!state || !state.playingStartedAt) return;
+        const watchMs = Math.max(0, Math.round(performance.now() - state.playingStartedAt));
+        if (watchMs <= 0 && state.stutterCount <= 0 && state.firstFrameMs === undefined) return;
+        onPlaybackQoS?.(itemRef.current, {
+            firstFrameMs: state.firstFrameMs,
+            stutterCount: state.stutterCount,
+            watchMs,
+            reportID: state.reportID
+        });
+        qosRef.current = {
+            ...createVideoQoSState(itemRef.current.video_id),
+            loadStartedAt: performance.now()
+        };
+    }, [onPlaybackQoS]);
+
+    useEffect(() => {
+        qosRef.current = createVideoQoSState(item.video_id);
+        if (active && showVideo) {
+            qosRef.current.loadStartedAt = performance.now();
+        }
+        return () => {
+            flushQoS();
+        };
+    }, [active, flushQoS, item.video_id, showVideo]);
+
+    useEffect(() => {
+        const video = videoRef.current;
+        if (!video || !showVideo) return;
+        if (active) {
+            const playback = video.play();
+            if (playback?.catch) {
+                playback.catch(() => {});
+            }
+            return;
+        }
+        video.pause();
+    }, [active, media, showVideo]);
+
+    // handleLoadedData 记录活动视频的首帧等待时间。
+    function handleLoadedData() {
+        const state = qosRef.current;
+        if (!active || !state || state.firstFrameMs !== undefined) return;
+        const startedAt = state.loadStartedAt || performance.now();
+        state.firstFrameMs = Math.max(0, Math.round(performance.now() - startedAt));
+    }
+
+    // handlePlaying 记录活动视频首次开始播放的时间。
+    function handlePlaying() {
+        const state = qosRef.current;
+        if (!active || !state) return;
+        if (!state.loadStartedAt) {
+            state.loadStartedAt = performance.now();
+        }
+        if (!state.playingStartedAt) {
+            state.playingStartedAt = performance.now();
+        }
+    }
+
+    // handleWaiting 累加活动视频等待事件次数。
+    function handleWaiting() {
+        const state = qosRef.current;
+        if (!active || !state) return;
+        state.stutterCount += 1;
+    }
 
     return (
         <article className="video-stage">
@@ -1322,7 +1489,14 @@ function VideoStage({
                     className="stage-media"
                     src={media}
                     poster={cover}
-                    autoPlay
+                    ref={videoRef}
+                    preload={active ? "metadata" : "none"}
+                    onLoadedData={handleLoadedData}
+                    onPlaying={handlePlaying}
+                    onWaiting={handleWaiting}
+                    onPause={flushQoS}
+                    onEnded={flushQoS}
+                    autoPlay={active}
                     muted
                     loop
                     playsInline
@@ -3216,5 +3390,128 @@ function formatRelativeTime(value) {
     return new Date(value).toLocaleDateString("zh-CN");
 }
 
-export default App;
+// fetchPlaybackConfig 按浏览器网络类型请求播放配置。
+async function fetchPlaybackConfig(token) {
+    const params = new URLSearchParams({
+        platform: "Web",
+        network_type: detectNetworkType()
+    });
+    return apiRequest(`/api/playback-config?${params.toString()}`, { token });
+}
 
+// fetchPreloadVideos 请求当前视频之后的预加载资源。
+async function fetchPreloadVideos(token, currentVideoID, limit) {
+    const params = new URLSearchParams({
+        current_video_id: String(currentVideoID || 0),
+        limit: String(limit || DEFAULT_PLAYBACK_CONFIG.preload_count)
+    });
+    return apiRequest(`/api/preload-videos?${params.toString()}`, { token });
+}
+
+// normalizePlaybackConfig 规范化预加载数量和缓冲时长，非法值回退到默认配置。
+function normalizePlaybackConfig(config) {
+    const preloadCount = Number(config?.preload_count);
+    const bufferMs = Number(config?.buffer_ms);
+    return {
+        platform: config?.platform || DEFAULT_PLAYBACK_CONFIG.platform,
+        network_type: config?.network_type || DEFAULT_PLAYBACK_CONFIG.network_type,
+        preload_count: Number.isFinite(preloadCount) ? Math.max(1, Math.min(10, preloadCount)) : DEFAULT_PLAYBACK_CONFIG.preload_count,
+        buffer_ms: Number.isFinite(bufferMs) && bufferMs > 0 ? bufferMs : DEFAULT_PLAYBACK_CONFIG.buffer_ms
+    };
+}
+
+// detectNetworkType 读取浏览器连接信息并映射为服务端网络类型。
+function detectNetworkType() {
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    const raw = String(connection?.effectiveType || connection?.type || "").toLowerCase();
+    if (raw.includes("wifi")) return "WiFi";
+    if (raw.includes("5g")) return "5G";
+    if (raw.includes("4g")) return "4G";
+    if (raw.includes("3g")) return "3G";
+    return DEFAULT_PLAYBACK_CONFIG.network_type;
+}
+
+// prewarmVideoAssets 按资源地址去重并预加载封面和视频元数据。
+function prewarmVideoAssets(items, loadedSet) {
+    for (const item of items) {
+        const coverKey = `cover:${item.cover_url || ""}`;
+        if (item.cover_url && !loadedSet.has(coverKey)) {
+            const imagePreload = new Image();
+            imagePreload.src = item.cover_url;
+            loadedSet.add(coverKey);
+        }
+        prewarmVideoMetadata(item.media_url, loadedSet);
+    }
+}
+
+// prewarmVideoMetadata 创建隐藏视频探针，加载完成、失败或四秒超时后释放资源。
+function prewarmVideoMetadata(url, loadedSet) {
+    const mediaURL = String(url || "").trim();
+    const mediaKey = `metadata:${mediaURL}`;
+    if (!mediaURL || loadedSet.has(mediaKey) || typeof document === "undefined") return;
+    loadedSet.add(mediaKey);
+
+    const probe = document.createElement("video");
+    probe.preload = "metadata";
+    probe.src = mediaURL;
+    probe.muted = true;
+    probe.playsInline = true;
+    probe.setAttribute("aria-hidden", "true");
+    probe.style.position = "absolute";
+    probe.style.width = "1px";
+    probe.style.height = "1px";
+    probe.style.opacity = "0";
+    probe.style.pointerEvents = "none";
+
+    let timer = 0;
+    // cleanup 移除探针监听器、计时器和媒体资源。
+    const cleanup = () => {
+        window.clearTimeout(timer);
+        probe.removeEventListener("loadedmetadata", cleanup);
+        probe.removeEventListener("canplay", cleanup);
+        probe.removeEventListener("error", cleanup);
+        probe.removeAttribute("src");
+        probe.load();
+        probe.remove();
+    };
+
+    probe.addEventListener("loadedmetadata", cleanup);
+    probe.addEventListener("canplay", cleanup);
+    probe.addEventListener("error", cleanup);
+    timer = window.setTimeout(cleanup, 4000);
+    document.body.appendChild(probe);
+    probe.load();
+}
+
+// createVideoQoSState 初始化单次播放质量状态和上报标识。
+function createVideoQoSState(videoID) {
+    return {
+        videoID,
+        reportID: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        loadStartedAt: 0,
+        playingStartedAt: 0,
+        firstFrameMs: undefined,
+        stutterCount: 0
+    };
+}
+
+// buildPlaybackQoSPayload 规范化质量指标并忽略无有效指标的报告。
+function buildPlaybackQoSPayload(metrics) {
+    const watchMs = Math.max(0, Math.round(Number(metrics?.watchMs || 0)));
+    const stutterCount = Math.max(0, Math.round(Number(metrics?.stutterCount || 0)));
+    const firstFrameNumber = Number(metrics?.firstFrameMs);
+    const firstFrameMs = Number.isFinite(firstFrameNumber) ? Math.max(0, Math.round(firstFrameNumber)) : undefined;
+    if (watchMs <= 0 && stutterCount <= 0 && firstFrameMs === undefined) return null;
+    return {
+        ...(firstFrameMs === undefined ? {} : { first_frame_ms: firstFrameMs }),
+        stutter_count: stutterCount,
+        watch_ms: watchMs
+    };
+}
+
+// createPlaybackQoSKey 根据视频与单次播放标识生成幂等键。
+function createPlaybackQoSKey(item, metrics) {
+    return `web-qos-${item.video_id}-${metrics?.reportID || Date.now()}`;
+}
+
+export default App;

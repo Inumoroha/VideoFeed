@@ -4,12 +4,15 @@ import (
 	"fmt"
 	applicationexposure "github.com/inumoroha/video-feed/internal/application/exposure"
 	applicationmessage "github.com/inumoroha/video-feed/internal/application/message"
+	applicationplayback "github.com/inumoroha/video-feed/internal/application/playback"
 	applicationrecommendation "github.com/inumoroha/video-feed/internal/application/recommendation"
 	exposurehandler "github.com/inumoroha/video-feed/internal/handler/exposure"
 	messagehandler "github.com/inumoroha/video-feed/internal/handler/message"
+	playbackhandler "github.com/inumoroha/video-feed/internal/handler/playback"
 	recommendationhandler "github.com/inumoroha/video-feed/internal/handler/recommendation"
 	exposurepersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/exposure"
 	messagepersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/message"
+	playbackpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/playback"
 	recommendationpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/recommendation"
 	"log"
 	"path/filepath"
@@ -125,6 +128,7 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	registerRelationRoutes(g, jwtManager, relationHandler)
 	registerRecommendationRoutes(g, recommendationhandler.New(recommendationService))
 	registerMessageRoutes(g, jwtManager, messagehandler.New(messageService), cfg.Internal.Token)
+	registerPlaybackRoutes(g, jwtManager, playbackhandler.New(applicationplayback.New(playbackpersistence.New(gormDB))), cfg.Internal.Token)
 
 	return nil
 }
