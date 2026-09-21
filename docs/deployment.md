@@ -77,3 +77,6 @@ python -B scripts/verify_exposure_live.py --embedding --output docs/worker-embed
 消息创建接口 `POST /internal/messages` 使用独立 `X-Internal-Token`。本地配置和 Compose 默认为空，默认拒绝内部创建请求。部署时设置 `INTERNAL_TOKEN`；Kubernetes 在 `deploy.yaml` 的 Secret 字段 `internal-token` 中填写，API 通过环境变量读取。不要将其传到 Web 客户端。用户消息查询、已读和互动触发通知仍可正常工作，不要求配置该令牌。
 
 消息存储复用 PostgreSQL 和现有迁移咨询锁，不新增数据库、数据卷、队列或健康检查。API/worker 启动会迁移 `user_message`；消息通知由 API 写入，worker 无需内部令牌。端口仍为 API 9000、PostgreSQL 宿主机 5433。详见 [消息模块](modules/message.md) 和 [迁移审计](migration-7a62b5c.md)。
+
+
+消息中心前端地址为 `http://127.0.0.1:5173/messages`。Vite 复用现有 `/api` 代理，生产 Nginx 的 `try_files ... /index.html` 支持直接访问和刷新该路径；不需要新增服务、环境变量或代理规则。前端不需要 `INTERNAL_TOKEN`。运行 `npm --prefix web test` 和 `npm --prefix web run build` 验证，生产镜像仍由 `web/Dockerfile` 构建。
