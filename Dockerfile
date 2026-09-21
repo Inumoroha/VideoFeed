@@ -16,7 +16,7 @@ FROM alpine:3.22
 
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates ffmpeg tzdata
 
 COPY --from=builder /out/gcfeed-api ./gcfeed-api
 COPY --from=builder /out/videofeed-worker ./videofeed-worker
