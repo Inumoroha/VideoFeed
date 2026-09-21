@@ -40,3 +40,5 @@ QoS 请求字段：`video_id` 必须为正数；`first_frame_ms` 可空且不得
 在仓库根目录使用 `docker compose up --build`，API 端口 9000，Web 端口 5173；不新增服务、队列、卷或环境变量。播放模块直接使用数据库，沿用现有健康检查和启动依赖。
 
 运行 `go test ./...`、`go vet ./...`，在 `web` 下运行 `npm test` 和 `npm run build`。真实并发测试需要专用 `VIDEOFEED_TEST_POSTGRES_URL`，执行 `go test ./internal/infrastructure/persistence/playback -run TestPlaybackPostgresLive -v`，测试会创建独立 schema 并在结束时清理。未配置时明确跳过，不能据此宣称真实并发验证通过。
+
+播放接口完整流程测试位于 `internal/router/playback_api_test.go`，静态视频 Range 测试位于 `internal/router/upload_static_range_test.go`；覆盖迁移对应关系与验证边界见 [测试迁移审计](../migration-1f452f8.md)。

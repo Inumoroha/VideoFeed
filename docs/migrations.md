@@ -27,3 +27,5 @@
 ## 播放优化迁移
 
 播放模块已接入现有 PostgreSQL 自动迁移，无新增服务或环境变量。四条接口、分层适配和验证限制见 [迁移审计](migration-b28ef00.md) 与 [播放模块](modules/playback.md)。
+
+- [1f452f8：播放接口流程、并发幂等与静态文件 Range 测试](migration-1f452f8.md)
