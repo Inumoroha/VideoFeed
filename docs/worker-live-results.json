@@ -1,5 +1,5 @@
 {
-  "project": "videofeed-worker-b00a32fc",
+  "project": "videofeed-worker-eb85c292",
   "checks": [
     "api_only_has_zero_consumers",
     "api_publishes_three_queue_backlogs_without_consuming",
@@ -9,7 +9,7 @@
     "process_exit_releases_amqp_connections"
   ],
   "status": "passed",
-  "started_at": "2026-09-20T20:10:21+0800",
+  "started_at": "2026-09-21T17:09:57+0800",
   "cleanup": "passed",
-  "finished_at": "2026-09-20T20:11:11+0800"
+  "finished_at": "2026-09-21T17:11:43+0800"
 }
