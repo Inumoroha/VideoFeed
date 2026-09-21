@@ -84,3 +84,13 @@ python -B scripts/verify_exposure_live.py --embedding --output docs/worker-embed
 ## 播放优化迁移
 
 播放模块已接入现有 PostgreSQL 自动迁移，无新增服务或环境变量。四条接口、分层适配和验证限制见 [迁移审计](migration-b28ef00.md) 与 [播放模块](modules/playback.md)。
+
+## 上传媒体工具
+
+根目录 Dockerfile 的运行镜像安装 Alpine `ffmpeg` 包（包含 ffprobe）；API 上传视频依赖这两个命令。API 与 worker 继续共用镜像，worker 不新增媒体任务。Compose 的服务、端口、上传卷、健康检查和启动依赖不变。
+
+本地运行 API 前安装 FFmpeg 并将 ffmpeg/ffprobe 加入该进程的 PATH，可用 `ffmpeg -version`、`ffprobe -version` 检查。工具缺失时视频上传返回 500，普通文件和图片仍可按规则上传。不存在新增环境变量或队列。
+
+视频处理为同步请求，须为实际媒体处理时间合理配置既有 HTTP 超时和反向代理超时/请求体限制；ffprobe 和 ffmpeg 分别有 30 秒及 2 分钟上限，部署默认 HTTP 超时可能更短。上传卷应有保存原文件与快启临时副本的空间。
+
+真实媒体测试：`go test ./internal/handler/upload -run 'TestVideoProcessorLive|TestUploadRealVideoLive' -v`，缺少工具时明确跳过；完整验证记录见 [上传迁移审计](migration-34f6682.md)。

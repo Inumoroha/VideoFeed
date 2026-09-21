@@ -14,6 +14,7 @@ VideoFeed 是一个面向短视频场景的 Feed 系统工程。项目用 Go API
 - Redis Feed 缓存、热榜和互动计数。
 - RabbitMQ 异步互动落库、视频发布事件和向量任务。
 - 播放配置回退、资源预加载、播放器质量采集和幂等上报，详见 [播放模块](docs/modules/playback.md)。
+- 上传视频/图片校验与 MP4/MOV faststart；本地 API 需提供 FFmpeg/ffprobe，容器镜像已包含，详见 [视频模块](docs/modules/video.md)。
 - React + Vite Web 客户端。
 - API 流程测试和 Web 生产构建。
 

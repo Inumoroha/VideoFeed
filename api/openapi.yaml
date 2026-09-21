@@ -1910,11 +1910,11 @@ paths:
   /api/uploads:
     post:
       tags:
-        - Upload
-      summary: Upload a file
+      - Upload
+      summary: 上传文件并校验媒体，MP4/MOV 执行快启处理
       operationId: uploadFile
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1928,14 +1928,81 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UploadResponse'
+              example:
+                url: /uploads/video/example.mp4
+                kind: video
+                filename: example.mp4
+                size: 1048576
         '400':
-          $ref: '#/components/responses/InvalidRequest'
+          description: 表单缺失、无效 kind、空文件、扩展名/MIME 不支持、文件类别大小超限或无效视频元数据。视频超过 600 秒或任一尺寸超过
+            3840 也返回 400。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missingFile:
+                  value:
+                    error: file is required
+                invalidKind:
+                  value:
+                    error: invalid upload kind
+                extension:
+                  value:
+                    error: unsupported upload extension
+                mime:
+                  value:
+                    error: unsupported upload content type
+                size:
+                  value:
+                    error: upload file is too large
+                duration:
+                  value:
+                    error: video duration is too long
+                dimension:
+                  value:
+                    error: video resolution is too large
+                codec:
+                  value:
+                    error: video codec is unsupported
+                metadata:
+                  value:
+                    error: video metadata is invalid
         '401':
           $ref: '#/components/responses/Unauthorized'
         '413':
-          $ref: '#/components/responses/PayloadTooLarge'
+          description: 完整 multipart 请求体超过 1073741824 字节（包含表单开销）。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: upload too large
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          description: 上传根目录未配置、目录创建或写入失败、ffprobe/ffmpeg 不可用或 faststart 失败。FFmpeg 执行错误可能在
+            error 中附带诊断信息。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                root:
+                  value:
+                    error: upload root is not configured
+                directory:
+                  value:
+                    error: failed to prepare upload directory
+                write:
+                  value:
+                    error: failed to save upload
+                tool:
+                  value:
+                    error: video tool is unavailable
+                faststart:
+                  value:
+                    error: video faststart failed
+      description: 兼容性变化：视频、封面和头像新增大小、扩展名及实际内容类型校验，空文件被拒绝。视频还校验时长、尺寸与编码，MP4/MOV 成功快启后才返回。普通
+        file 保留扩展名清理规则，不执行媒体校验。无幂等键或自动重试。
 components:
   parameters:
     IdempotencyKey:
@@ -3050,41 +3117,44 @@ components:
     UploadRequest:
       type: object
       required:
-        - file
+      - file
       properties:
         file:
           type: string
           format: binary
+          description: video 扩展名为 mp4/mov/webm，内容探测类型为 video/mp4、video/quicktime、video/webm
+            或 application/octet-stream。cover/avatar 扩展名为 jpg/jpeg/png/webp，探测类型为 image/jpeg、image/png
+            或 image/webp。分别检查白名单，不强制后缀与 MIME 一一匹配；图片不做完整解码。视频要求有限正时长且不超过 600 秒、至少一个视频流、每个视频流宽高在
+            1 至 3840，编码为 h264/h265/hevc/vp8/vp9/av1；音频非空编码须为 aac/mp3/opus/vorbis。
         kind:
           type: string
-          enum:
-            - video
-            - cover
-            - avatar
-            - file
           default: file
+          description: 允许 video、cover、avatar、file；去除首尾空白并忽略大小写，缺省或空字符串按 file 处理。
+      description: 非空文件。video 上限 536870912 字节，cover/avatar 上限 20971520 字节，file 上限 1073741824
+        字节；完整请求体还受 1 GiB 限制。
     UploadResponse:
       type: object
       required:
-        - url
-        - kind
-        - filename
-        - size
+      - url
+      - kind
+      - filename
+      - size
       properties:
         url:
           type: string
         kind:
           type: string
           enum:
-            - video
-            - cover
-            - avatar
-            - file
+          - video
+          - cover
+          - avatar
+          - file
         filename:
           type: string
         size:
           type: integer
           format: int64
+          description: 原始上传文件字节数，快启重写后不重新计算。
     MessageResponse:
       type: object
       required:
