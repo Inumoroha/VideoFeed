@@ -19,7 +19,7 @@ func TestCreate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	root := t.TempDir()
 	handler := NewHandler(root)
-	request := multipartRequest(t, "video.mp4", "video", []byte("video data"))
+	request := multipartRequest(t, "video.mp4", "file", []byte("video data"))
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)
 	context.Request = request
@@ -33,13 +33,13 @@ func TestCreate(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.Kind != "video" || response.Size != int64(len("video data")) {
+	if response.Kind != "file" || response.Size != int64(len("video data")) {
 		t.Fatalf("unexpected response: %+v", response)
 	}
-	if !strings.HasPrefix(response.URL, "/uploads/video/") || filepath.Ext(response.Filename) != ".mp4" {
+	if !strings.HasPrefix(response.URL, "/uploads/file/") || filepath.Ext(response.Filename) != ".mp4" {
 		t.Fatalf("unexpected file metadata: %+v", response)
 	}
-	content, err := os.ReadFile(filepath.Join(root, "video", response.Filename))
+	content, err := os.ReadFile(filepath.Join(root, "file", response.Filename))
 	if err != nil {
 		t.Fatalf("read saved file: %v", err)
 	}
