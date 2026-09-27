@@ -15,11 +15,21 @@
 
 ## 数据库和幂等
 
-PostgreSQL 表 `user_message` 保存 `id`、`user_id`、`type`、`title`、`content`、可空 `event_id`、可空 `idempotency_key`、布尔 `is_read`、`created_at` 和可空 `read_at`。类型为 LIKE、COMMENT、FOLLOW、SYSTEM；接收用户 ID 仅校验正数，不查询用户存在性。
+PostgreSQL 表 `user_message` 保存 `id`、`user_id`、`type`、`title`、`content`、触发者字段 `actor_id`（非空，默认 0）、可空 `actor_nickname`、可空 `actor_avatar_url`、可空 `event_id`、可空 `idempotency_key`、布尔 `is_read`、`created_at` 和可空 `read_at`。类型为 LIKE、COMMENT、FOLLOW、SYSTEM；接收用户 ID 仅校验正数，不查询用户存在性。
 
 `(user_id,event_id)` 与 `(user_id,idempotency_key)` 分别具有唯一约束。空键保存为 NULL，允许无键请求重复新增；冲突事务先回滚，再按同一用户查询既有消息。两个键分别命中不同消息时，沿用原实现返回 ID 较大的消息。索引名称使用 `message` 前缀，避免 PostgreSQL schema 内与其他表索引重名；补齐 `(user_id,created_at)` 列表索引。
 
 创建时去除首尾空白，标题/内容分别非空且最多 128/1024 个 UTF-8 字节；事件标识最多 64 字节，幂等键最多 128 字节。类型忽略大小写。已读更新限定当前用户且只更新未读记录，忽略他人或不存在的 ID，重复执行不会改写已读时间。
+
+## 触发者展示信息
+
+点赞、评论和关注通知会携带触发者的 `actor_id`、`actor_nickname` 和 `actor_avatar_url`，消息列表可以直接展示头像和昵称，正文不再拼接“用户 <ID>”。
+
+- 互动通知读取 `users` 表中状态正常的用户资料，读取失败或用户不存在时昵称为空，通知仍然写入。
+- 关注通知同样先读取关注者资料，读取失败时按空昵称写入并保留通知。
+- 消息写入器支持 `ActorMessageWriter` 时写入结构化触发者字段；只实现旧 `CreateFromEvent` 的写入器会回退为“<昵称或用户 ID> <正文>”的正文拼接，行为与旧版本一致。
+- 触发者字段参与幂等：重复事件或幂等键命中时返回既有消息及其触发者字段，不会改写已保存的昵称和头像。
+- `actor_id` 为 0 时响应省略 `actor_id`、`actor_nickname` 和 `actor_avatar_url`；字段名和省略规则见 `api/openapi.yaml`。
 
 ## 通知触发与失败处理
 
@@ -57,6 +67,7 @@ go test ./internal/infrastructure/persistence/message -run TestMessagePostgresLi
 
 - 顶部与导航未读角标调用 `/api/message-stats/unread`，超过 99 显示 `99+`；会话、路由变化以及成功已读后刷新，没有后台轮询。
 - 每页请求 20 条，续页按 ID 去重；支持首次加载、空列表、错误重试、刷新和加载更多。续页失败保留当前列表。
+- 列表条目在标题下展示触发者行（头像加昵称）和正文；缺少结构化触发者字段的旧消息回退到正文“用户 <ID>”前缀还原昵称，并去掉该前缀后再展示正文。
 - 点击未读消息提交该 ID，全部已读提交空 ID 数组。成功后更新可见项并刷新全局角标；失败保留原状态供重试。页面标题旁的未读数统计已加载消息，导航角标统计用户全部消息，沿用源提交语义。
 - 列表和已读操作串行，避免重复提交及旧列表覆盖已读状态；账号切换、离开页面后不接受旧请求结果。列表/已读遇到 401 清理会话并跳转登录；独立角标请求遇到 401 清零，其他角标请求失败保留原数值。
 - 页面仅调用用户消息 API，不包含内部服务令牌，也不向 `/internal/messages` 发起请求。

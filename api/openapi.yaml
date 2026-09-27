@@ -303,8 +303,11 @@ paths:
                   user_id: 42
                   type: LIKE
                   title: 收到点赞
-                  content: 用户 77 点赞了你的视频 1001
+                  content: 点赞了你的视频
                   event_id: interaction:like:1001:77
+                  actor_id: 77
+                  actor_nickname: 示例用户
+                  actor_avatar_url: https://cdn.example.com/avatar-77.png
                   is_read: false
                   created_at: '2026-09-21T00:00:00Z'
                 next_cursor: eyJjcmVhdGVkX2F0IjoiMjAyNi0wOS0yMVQwMDowMDowMFoiLCJtZXNzYWdlX2lkIjoxfQ
@@ -416,8 +419,11 @@ paths:
               user_id: 42
               type: like
               title: 收到点赞
-              content: 你的作品收到点赞
+              content: 点赞了你的视频
               event_id: evt-example
+              actor_id: 77
+              actor_nickname: 示例用户
+              actor_avatar_url: https://cdn.example.com/avatar-77.png
       responses:
         '201':
           description: 创建新消息
@@ -2241,6 +2247,16 @@ components:
           type: string
         event_id:
           type: string
+        actor_id:
+          type: integer
+          format: int64
+          description: 触发消息的用户编号；缺少触发者时为 0 并在响应中省略。
+        actor_nickname:
+          type: string
+          description: 触发消息的用户昵称；为空时在响应中省略。
+        actor_avatar_url:
+          type: string
+          description: 触发消息的用户头像地址；为空时在响应中省略。
         is_read:
           type: boolean
         created_at:
@@ -2313,6 +2329,16 @@ components:
         event_id:
           type: string
           description: 可空，去除首尾空白后最多 64 个 UTF-8 字节。
+        actor_id:
+          type: integer
+          format: int64
+          description: 可空，触发消息的用户编号；非正数表示缺少触发者。
+        actor_nickname:
+          type: string
+          description: 可空，触发消息的用户昵称，去除首尾空白后写入消息。
+        actor_avatar_url:
+          type: string
+          description: 可空，触发消息的用户头像地址，去除首尾空白后写入消息。
     RecommendationExposureDecisionsRequest:
       type: object
       required:
@@ -2981,6 +3007,8 @@ components:
         - like_count
         - comment_count
         - favorite_count
+        - liked
+        - favorited
         - published_at
       properties:
         video_id:
@@ -3007,6 +3035,12 @@ components:
           type: integer
         favorite_count:
           type: integer
+        liked:
+          type: boolean
+          description: 当前登录用户是否已点赞；匿名请求固定为 false。
+        favorited:
+          type: boolean
+          description: 当前登录用户是否已收藏；匿名请求固定为 false。
         published_at:
           type: string
           format: date-time

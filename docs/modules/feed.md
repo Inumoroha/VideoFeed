@@ -22,7 +22,11 @@
 | `limit` | query | int | 否 | 10 | 返回数量，最大 100 |
 | `scene` | query | string | 否 | `timeline` | Feed 场景：`timeline`、`hot`、`following`、`recommend` |
 
-响应包含 `scene`、`items`、`next_cursor` 和 `has_more`。游标使用 URL 安全的 Base64 编码；时间线无下一页时 `next_cursor` 为空字符串；Redis 热榜非空页仍有游标，应以 `has_more` 停止；关注流非空页始终返回游标，使用 `has_more` 判断是否继续，timeline/hot/following 非法游标返回 400；推荐场景见业务规则。
+响应包含 `scene`、`items`、`next_cursor` 和 `has_more`。每条 `items` 包含视频卡片、互动计数，以及当前登录用户对该视频的 `liked` 和 `favorited` 状态；匿名请求固定返回 `false`。游标使用 URL 安全的 Base64 编码；时间线无下一页时 `next_cursor` 为空字符串；Redis 热榜非空页仍有游标，应以 `has_more` 停止；关注流非空页始终返回游标，使用 `has_more` 判断是否继续，timeline/hot/following 非法游标返回 400；推荐场景见业务规则。
+
+查看者互动状态在组装阶段按当前登录用户一次性批量读取 `interaction_action` 中状态为有效（`status = 1`）的 LIKE 和 FAVORITE 记录，并入 Feed 条目；读取失败直接返回加载错误，不用缓存的旧状态兜底。
+
+前端 `web/src/App.jsx` 的 `FeedPage` 用 `liked`、`favorited` 两个映射维护展示状态：首屏和切换场景时按响应重建映射，续页时把新条目的布尔值显式合并进映射，因此续页返回的已取消状态会覆盖旧值，不会残留为已选。
 
 ### 排序规则
 
