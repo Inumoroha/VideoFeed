@@ -57,3 +57,9 @@ Feed 条目新增当前用户点赞收藏状态，点赞、评论、关注通知
 新增 Prometheus 指标模块、API `/metrics` 与 worker `9091` 指标服务，并在 Feed、缓存、消息队列、上传和 worker 埋点；Compose 增加 Prometheus 与 Grafana 及概览看板。命名空间、端口与路径适配见 [迁移审计](migration-2b9eaa5.md) 和 [监控模块](modules/monitoring.md)。
 
 - [2b9eaa5：接入 Prometheus 和 Grafana 监控](migration-2b9eaa5.md)
+
+## 性能测试指南迁移
+
+压测说明改为独立 Markdown 指南，端口、路由、指标前缀与看板地址按 VideoFeed 适配；保留仓库内 k6 脚本并说明与来源删除脚本的差异，见 [性能测试指南](performance-testing.md) 和 [迁移审计](migration-7aceb3f.md)。
+
+- [7aceb3f：改为 Markdown 压测指南](migration-7aceb3f.md)

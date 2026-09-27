@@ -100,14 +100,9 @@ Grafana 默认账号密码为 `admin` / `admin`，本地示例值，部署前必
 
 ## 压力测试
 
-仓库提供 k6 脚本 `scripts/feed-load.js`，默认压测推荐流并带登录与阈值：
+详细步骤见 [docs/performance-testing.md](docs/performance-testing.md)，包括最新流、热门榜单、推荐流、极限 QPS、仓库内 k6 脚本用法和 Grafana 指标解读。
 
-```bash
-k6 run -e ACCOUNT=<测试账号> -e PASSWORD=<测试密码> scripts/feed-load.js
-k6 run -e SCENE=timeline -e VUS=50 -e DURATION=120s scripts/feed-load.js
-```
-
-可用环境变量：`BASE_URL`（默认 `http://127.0.0.1:9000`）、`SCENE`、`TOKEN`、`ACCOUNT`、`PASSWORD`、`LIMIT`、`THINK_TIME`、`VUS`、`DURATION`。压测结果可直接与 [监控模块](docs/modules/monitoring.md) 的 Prometheus 指标和 Grafana 看板对照。
+重点查看 `http_reqs` 后面的 `/s`、`http_req_duration p(95)`、`http_req_failed` 和 `feed_success_rate`。
 
 ## 文档地图
 
@@ -118,6 +113,7 @@ k6 run -e SCENE=timeline -e VUS=50 -e DURATION=120s scripts/feed-load.js
 | [docs/architecture.md](docs/architecture.md) | 系统架构、分层、核心链路、数据模型 |
 | [docs/engineering.md](docs/engineering.md) | 工程规范、目录规则、API 风格、测试约定 |
 | [docs/optimization.md](docs/optimization.md) | Feed 性能和稳定性专题 |
+| [docs/performance-testing.md](docs/performance-testing.md) | k6 压测、QPS/P95 解读、Grafana 指标观察 |
 | [docs/uiux.md](docs/uiux.md) | Web 客户端 UI/UX 规格 |
 | [docs/modules/](docs/modules/README.md) | 各业务模块设计 |
 | [部署说明](docs/deployment.md) | 本地、Compose、Kubernetes 示例与已知限制 |
