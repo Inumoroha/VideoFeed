@@ -114,6 +114,7 @@ Grafana 默认账号密码为 `admin` / `admin`，本地示例值，部署前必
 | [docs/engineering.md](docs/engineering.md) | 工程规范、目录规则、API 风格、测试约定 |
 | [docs/optimization.md](docs/optimization.md) | Feed 性能和稳定性专题 |
 | [docs/performance-testing.md](docs/performance-testing.md) | k6 压测、QPS/P95 解读、Grafana 指标观察 |
+| [docs/interview-questions.md](docs/interview-questions.md) | 围绕本项目的面试问答清单与实现边界说明 |
 | [docs/uiux.md](docs/uiux.md) | Web 客户端 UI/UX 规格 |
 | [docs/modules/](docs/modules/README.md) | 各业务模块设计 |
 | [部署说明](docs/deployment.md) | 本地、Compose、Kubernetes 示例与已知限制 |

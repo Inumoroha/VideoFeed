@@ -63,3 +63,9 @@ Feed 条目新增当前用户点赞收藏状态，点赞、评论、关注通知
 压测说明改为独立 Markdown 指南，端口、路由、指标前缀与看板地址按 VideoFeed 适配；保留仓库内 k6 脚本并说明与来源删除脚本的差异，见 [性能测试指南](performance-testing.md) 和 [迁移审计](migration-7aceb3f.md)。
 
 - [7aceb3f：改为 Markdown 压测指南](migration-7aceb3f.md)
+
+## 面试问答清单迁移
+
+面试问答清单保留 20 个章节与 196 个问题条目，数据库、分层目录、表名、路由、常量数字与指标命名空间按 VideoFeed 真实实现更正，并新增实现边界说明；来源中把未实现能力写成已完成事实的 7 处已改写，见 [面试问答清单](interview-questions.md) 和 [迁移审计](migration-8cf995c.md)。
+
+- [8cf995c：补充项目面试问答清单](migration-8cf995c.md)
