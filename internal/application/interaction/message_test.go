@@ -16,10 +16,13 @@ type memoryInteractionMessageWriter struct {
 
 // memoryInteractionMessage 保存互动通知的断言字段。
 type memoryInteractionMessage struct {
-	UserID  int64
-	Type    string
-	Title   string
-	EventID string
+	UserID         int64
+	Type           string
+	Title          string
+	EventID        string
+	ActorID        int64
+	ActorNickname  string
+	ActorAvatarURL string
 }
 
 // TestInteractionMessageWriter 验证点赞重放不重复通知、评论通知及自评跳过。
@@ -48,8 +51,14 @@ func TestInteractionMessageWriter(t *testing.T) {
 	if messages[0].UserID != 42 || messages[0].Type != "LIKE" {
 		t.Fatalf("unexpected like message: %+v", messages[0])
 	}
+	if messages[0].ActorID != 77 || messages[0].ActorNickname != "actor-77" || messages[0].ActorAvatarURL != "https://example.com/avatar-77.jpg" {
+		t.Fatalf("unexpected like actor: %+v", messages[0])
+	}
 	if messages[1].UserID != 42 || messages[1].Type != "COMMENT" {
 		t.Fatalf("unexpected comment message: %+v", messages[1])
+	}
+	if messages[1].ActorID != 77 || messages[1].ActorNickname != "actor-77" || messages[1].ActorAvatarURL != "https://example.com/avatar-77.jpg" {
+		t.Fatalf("unexpected comment actor: %+v", messages[1])
 	}
 }
 
@@ -68,6 +77,23 @@ func (w *memoryInteractionMessageWriter) CreateFromEvent(ctx context.Context, us
 		Type:    messageType,
 		Title:   title,
 		EventID: eventID,
+	})
+	return nil, nil
+}
+
+// CreateFromActorEvent 加锁记录带触发用户资料的互动消息字段。
+func (w *memoryInteractionMessageWriter) CreateFromActorEvent(ctx context.Context, userID int64, messageType string, title string, content string, eventID string, idempotencyKey string, actorID int64, actorNickname string, actorAvatarURL string) (any, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.messages = append(w.messages, memoryInteractionMessage{
+		UserID:         userID,
+		Type:           messageType,
+		Title:          title,
+		EventID:        eventID,
+		ActorID:        actorID,
+		ActorNickname:  actorNickname,
+		ActorAvatarURL: actorAvatarURL,
 	})
 	return nil, nil
 }

@@ -151,6 +151,45 @@ func TestGetStatsReadsShardedCountersOnJSONMiss(t *testing.T) {
 	}
 }
 
+// TestSetVideoStatWritesJSONCache 验证单视频计数写入后可从 JSON 缓存按原值读回。
+func TestSetVideoStatWritesJSONCache(t *testing.T) {
+	ctx := context.Background()
+	videoID := int64(1005)
+	redisClient := newActionStatFakeRedis()
+
+	err := setActionStatJSON(ctx, redisClient, feedStatKey(videoID), videoStatToFeedStat(&domaininteraction.VideoStat{
+		VideoID:       videoID,
+		LikeCount:     2,
+		CommentCount:  3,
+		FavoriteCount: 1,
+	}))
+	if err != nil {
+		t.Fatalf("SetVideoStat: %v", err)
+	}
+
+	stats, err := getStats(ctx, redisClient, []int64{videoID})
+	if err != nil {
+		t.Fatalf("getStats: %v", err)
+	}
+	stat := stats[videoID]
+	if stat == nil || stat.LikeCount != 2 || stat.CommentCount != 3 || stat.FavoriteCount != 1 {
+		t.Fatalf("unexpected stat: %+v", stat)
+	}
+}
+
+// TestVideoStatCacheable 验证空统计和非正视频编号不会被判定为可缓存。
+func TestVideoStatCacheable(t *testing.T) {
+	if videoStatCacheable(nil) {
+		t.Fatal("nil stat should not be cacheable")
+	}
+	if videoStatCacheable(&domaininteraction.VideoStat{VideoID: 0, CommentCount: 5}) {
+		t.Fatal("zero video id should not be cacheable")
+	}
+	if !videoStatCacheable(&domaininteraction.VideoStat{VideoID: 1006, CommentCount: 1}) {
+		t.Fatal("positive video id should be cacheable")
+	}
+}
+
 // TestActionStatBaseInitUsesInitialStat 验证基数直接使用传入统计。
 func TestActionStatBaseInitUsesInitialStat(t *testing.T) {
 	videoID := int64(1004)

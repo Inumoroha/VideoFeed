@@ -1,4 +1,4 @@
-﻿package feed
+package feed
 
 import (
 	"context"
@@ -60,10 +60,11 @@ func (r *handlerTestRepository) BatchGetFeedStats(_ context.Context, ids []int64
 	return m, r.err
 }
 
-// BatchGetViewerActionStates 返回空查看者互动状态，供不校验互动状态的用例满足仓储接口。
+// BatchGetViewerActionStates 返回空的查看者互动状态，供不校验互动状态的用例满足仓储接口。
 func (r *handlerTestRepository) BatchGetViewerActionStates(context.Context, int64, []int64) (map[int64]*domainfeed.ViewerActionState, error) {
-	return map[int64]*domainfeed.ViewerActionState{}, nil
+	return map[int64]*domainfeed.ViewerActionState{}, r.err
 }
+
 // ListTimelineFeed 返回测试信息流或预设错误。
 func (r *handlerTestRepository) ListTimelineFeed(_ context.Context, _ *domainfeed.TimelineCursor, _ int) ([]*domainfeed.FeedItem, error) {
 	return r.items, r.err

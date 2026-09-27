@@ -17,10 +17,13 @@ type memoryRelationMessageWriter struct {
 
 // memoryRelationMessage 保存关注通知的断言字段。
 type memoryRelationMessage struct {
-	UserID  int64
-	Type    string
-	Title   string
-	EventID string
+	UserID         int64
+	Type           string
+	Title          string
+	EventID        string
+	ActorID        int64
+	ActorNickname  string
+	ActorAvatarURL string
 }
 
 // TestRelationMessageWriter 验证首次关注发出通知、重复关注去重及取关不发通知。
@@ -46,6 +49,9 @@ func TestRelationMessageWriter(t *testing.T) {
 	if messages[0].UserID != 77 || messages[0].Type != "FOLLOW" {
 		t.Fatalf("unexpected follow message: %+v", messages[0])
 	}
+	if messages[0].ActorID != 42 || messages[0].ActorNickname != "viewer-42" || messages[0].ActorAvatarURL != "https://example.com/42.jpg" {
+		t.Fatalf("unexpected follow actor: %+v", messages[0])
+	}
 }
 
 // newMemoryRelationMessageWriter 初始化关注通知和事件去重容器。
@@ -70,6 +76,27 @@ func (w *memoryRelationMessageWriter) CreateFromEvent(ctx context.Context, userI
 		Type:    messageType,
 		Title:   title,
 		EventID: eventID,
+	})
+	return nil, nil
+}
+
+// CreateFromActorEvent 加锁记录带触发用户资料的关注消息，同一事件重复调用直接返回。
+func (w *memoryRelationMessageWriter) CreateFromActorEvent(ctx context.Context, userID int64, messageType string, title string, content string, eventID string, idempotencyKey string, actorID int64, actorNickname string, actorAvatarURL string) (any, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if _, exists := w.seen[eventID]; exists {
+		return nil, nil
+	}
+	w.seen[eventID] = struct{}{}
+	w.messages = append(w.messages, memoryRelationMessage{
+		UserID:         userID,
+		Type:           messageType,
+		Title:          title,
+		EventID:        eventID,
+		ActorID:        actorID,
+		ActorNickname:  actorNickname,
+		ActorAvatarURL: actorAvatarURL,
 	})
 	return nil, nil
 }

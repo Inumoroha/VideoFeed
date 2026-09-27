@@ -1,4 +1,4 @@
-﻿package feed
+package feed
 
 import (
 	"context"
@@ -52,10 +52,11 @@ func (r *serviceTestRepository) BatchGetFeedStats(_ context.Context, ids []int64
 	return map[int64]*domainfeed.FeedStat{}, nil
 }
 
-// BatchGetViewerActionStates 返回空查看者互动状态，供不校验互动状态的用例满足仓储接口。
+// BatchGetViewerActionStates 返回空的查看者互动状态，供不校验互动状态的用例满足仓储接口。
 func (r *serviceTestRepository) BatchGetViewerActionStates(context.Context, int64, []int64) (map[int64]*domainfeed.ViewerActionState, error) {
 	return map[int64]*domainfeed.ViewerActionState{}, nil
 }
+
 // ListTimelineFeed 返回测试信息流并记录服务请求的游标和查询数量。
 func (r *serviceTestRepository) ListTimelineFeed(_ context.Context, cursor *domainfeed.TimelineCursor, limit int) ([]*domainfeed.FeedItem, error) {
 	r.listLimit = limit

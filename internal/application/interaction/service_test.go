@@ -1,8 +1,10 @@
-﻿package interaction
+package interaction
 
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,10 +64,18 @@ func (r *interactionServiceRepository) DeleteComment(context.Context, int64, int
 	return r.deleteComment, r.deleteCount, r.deleteErr
 }
 
-// GetUserProfile 返回最小用户资料，供不校验触发者的用例满足仓储接口。
+// GetUserProfile 返回可预测的昵称和头像，供通知用例断言触发者展示信息。
 func (r *interactionServiceRepository) GetUserProfile(_ context.Context, userID int64) (*domaininteraction.UserProfile, error) {
-	return &domaininteraction.UserProfile{ID: userID}, nil
+	if userID <= 0 {
+		return nil, domaininteraction.ErrInvalidUserID
+	}
+	return &domaininteraction.UserProfile{
+		ID:        userID,
+		Nickname:  fmt.Sprintf("actor-%d", userID),
+		AvatarURL: fmt.Sprintf("https://example.com/avatar-%d.jpg", userID),
+	}, nil
 }
+
 // TestServiceRejectsUninitializedDependencies 验证服务依赖缺失时返回明确错误。
 func TestServiceRejectsUninitializedDependencies(t *testing.T) {
 	var service *Service
@@ -105,6 +115,84 @@ func TestListCommentsNormalizesLimit(t *testing.T) {
 	}
 	if repository.listLimit != defaultCommentLimit+1 {
 		t.Fatalf("ListComments() repository limit = %d, want %d", repository.listLimit, defaultCommentLimit+1)
+	}
+}
+
+// memoryInteractionStatCache 使用互斥锁记录被同步的视频计数。
+type memoryInteractionStatCache struct {
+	mu    sync.Mutex
+	stats map[int64]*domaininteraction.VideoStat
+}
+
+// newMemoryInteractionStatCache 初始化空的互动计数缓存替身。
+func newMemoryInteractionStatCache() *memoryInteractionStatCache {
+	return &memoryInteractionStatCache{stats: map[int64]*domaininteraction.VideoStat{}}
+}
+
+// SetVideoStat 加锁保存视频计数副本。
+func (c *memoryInteractionStatCache) SetVideoStat(_ context.Context, stat *domaininteraction.VideoStat) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cloned := *stat
+	c.stats[stat.VideoID] = &cloned
+	return nil
+}
+
+// StatForTest 加锁读取视频计数副本，未记录时返回空值。
+func (c *memoryInteractionStatCache) StatForTest(videoID int64) *domaininteraction.VideoStat {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stats[videoID] == nil {
+		return nil
+	}
+	cloned := *c.stats[videoID]
+	return &cloned
+}
+
+// TestInteractionCommentSyncsStatCache 验证新增和删除评论都会把评论数同步到计数缓存。
+func TestInteractionCommentSyncsStatCache(t *testing.T) {
+	repository := &interactionServiceRepository{
+		lookupErr:      domaininteraction.ErrCommentNotFound,
+		createdComment: &domaininteraction.Comment{ID: 11, VideoID: 1001, UserID: 77, Content: "cache comment", Status: domaininteraction.CommentStatusNormal},
+	}
+	cache := newMemoryInteractionStatCache()
+	service := NewService(repository, WithStatCache(cache))
+
+	created, err := service.CreateComment(context.Background(), 77, 1001, "cache comment", "comment-cache-1")
+	if err != nil {
+		t.Fatalf("create comment: %v", err)
+	}
+	stat := cache.StatForTest(1001)
+	if stat == nil || stat.CommentCount != 1 {
+		t.Fatalf("expected comment count cache to be 1, got %+v", stat)
+	}
+
+	repository.deleteComment = &domaininteraction.Comment{ID: created.Comment.ID, VideoID: 1001, Status: domaininteraction.CommentStatusDeleted}
+	repository.deleteCount = 0
+	if _, err := service.DeleteComment(context.Background(), created.Comment.ID, 77, "user"); err != nil {
+		t.Fatalf("delete comment: %v", err)
+	}
+	stat = cache.StatForTest(1001)
+	if stat == nil || stat.CommentCount != 0 {
+		t.Fatalf("expected comment count cache to be 0, got %+v", stat)
+	}
+}
+
+// TestInteractionStatCacheWithoutProviderUsesZeroBase 验证仓储不支持计数读取时仍以零计数基数同步评论数。
+func TestInteractionStatCacheWithoutProviderUsesZeroBase(t *testing.T) {
+	repository := &interactionServiceRepository{
+		lookupErr:      domaininteraction.ErrCommentNotFound,
+		createdComment: &domaininteraction.Comment{ID: 12, VideoID: 1002, UserID: 77, Content: "text", Status: domaininteraction.CommentStatusNormal},
+	}
+	cache := newMemoryInteractionStatCache()
+	service := NewService(repository, WithStatCache(cache))
+
+	if _, err := service.CreateComment(context.Background(), 77, 1002, "text", "comment-cache-2"); err != nil {
+		t.Fatalf("create comment: %v", err)
+	}
+	stat := cache.StatForTest(1002)
+	if stat == nil || stat.CommentCount != 1 || stat.LikeCount != 0 || stat.FavoriteCount != 0 {
+		t.Fatalf("unexpected stat cache: %+v", stat)
 	}
 }
 

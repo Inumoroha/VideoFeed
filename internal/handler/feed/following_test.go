@@ -1,4 +1,4 @@
-﻿package feed
+package feed
 
 import (
 	"context"
@@ -40,6 +40,8 @@ type feedItemAPIResponse struct {
 	LikeCount       int       `json:"like_count"`
 	CommentCount    int       `json:"comment_count"`
 	FavoriteCount   int       `json:"favorite_count"`
+	Liked           bool      `json:"liked"`
+	Favorited       bool      `json:"favorited"`
 	PublishedAt     time.Time `json:"published_at"`
 }
 
@@ -54,17 +56,19 @@ type memoryFeedRepo struct {
 	following                map[int64]map[int64]struct{}
 	followerCounts           map[int64]int
 	inbox                    map[int64]map[int64]struct{}
+	viewerActions            map[int64]map[int64]*domainfeed.ViewerActionState
 	followingCalls           int
 	followingPullAuthorCalls int
 }
 
-// newMemoryFeedRepo 初始化测试视频、关注关系、粉丝数和收件箱。
+// newMemoryFeedRepo 初始化测试视频、关注关系、粉丝数、收件箱和查看者互动状态。
 func newMemoryFeedRepo(items []*domainfeed.FeedItem) *memoryFeedRepo {
 	return &memoryFeedRepo{
 		items:          items,
 		following:      map[int64]map[int64]struct{}{},
 		followerCounts: map[int64]int{},
 		inbox:          map[int64]map[int64]struct{}{},
+		viewerActions:  map[int64]map[int64]*domainfeed.ViewerActionState{},
 	}
 }
 
@@ -100,6 +104,20 @@ func (r *memoryFeedRepo) PushToInboxForTest(viewerID int64, videoID int64) {
 		r.inbox[viewerID] = map[int64]struct{}{}
 	}
 	r.inbox[viewerID][videoID] = struct{}{}
+}
+
+// SetViewerActionForTest 加锁设置测试用户在指定视频上的点赞和收藏状态。
+func (r *memoryFeedRepo) SetViewerActionForTest(viewerID int64, videoID int64, liked bool, favorited bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.viewerActions[viewerID] == nil {
+		r.viewerActions[viewerID] = map[int64]*domainfeed.ViewerActionState{}
+	}
+	r.viewerActions[viewerID][videoID] = &domainfeed.ViewerActionState{
+		VideoID:   videoID,
+		Liked:     liked,
+		Favorited: favorited,
+	}
 }
 
 // ListTimelinePage 加锁模拟时间线排序与游标分页。
@@ -226,10 +244,67 @@ func (r *memoryFeedRepo) BatchGetFeedStats(ctx context.Context, videoIDs []int64
 	return stats, nil
 }
 
-// BatchGetViewerActionStates 返回空查看者互动状态，供不校验互动状态的用例满足仓储接口。
-func (r *memoryFeedRepo) BatchGetViewerActionStates(context.Context, int64, []int64) (map[int64]*domainfeed.ViewerActionState, error) {
-	return map[int64]*domainfeed.ViewerActionState{}, nil
+// BatchGetViewerActionStates 加锁返回当前用户对指定视频的点赞和收藏状态，未记录时按未互动处理。
+func (r *memoryFeedRepo) BatchGetViewerActionStates(ctx context.Context, viewerID int64, videoIDs []int64) (map[int64]*domainfeed.ViewerActionState, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	states := map[int64]*domainfeed.ViewerActionState{}
+	for _, videoID := range videoIDs {
+		state := &domainfeed.ViewerActionState{VideoID: videoID}
+		if stored := r.viewerActions[viewerID][videoID]; stored != nil {
+			*state = *stored
+		}
+		states[videoID] = state
+	}
+	return states, nil
 }
+
+// TestFeedIncludesViewerActionState 验证登录用户拉取 Feed 时返回自己的点赞和收藏状态。
+func TestFeedIncludesViewerActionState(t *testing.T) {
+	repo := newMemoryFeedRepo(seedFeedItems())
+	repo.SetViewerActionForTest(42, 3, true, false)
+	repo.SetViewerActionForTest(42, 2, false, true)
+	router, jwtManager := newFeedRouterWithServiceAndJWT(t, applicationfeed.NewService(repo))
+	token := signTestToken(t, jwtManager, 42)
+
+	response := performJSONRequest(router, http.MethodGet, "/api/feed-items?limit=2", "", token)
+	requireStatus(t, response, http.StatusOK)
+
+	var page feedAPIResponse
+	decodeJSON(t, response, &page)
+	if len(page.Items) != 2 {
+		t.Fatalf("unexpected feed response: %+v", page)
+	}
+	if page.Items[0].VideoID != 3 || !page.Items[0].Liked || page.Items[0].Favorited {
+		t.Fatalf("expected first item liked only: %+v", page.Items[0])
+	}
+	if page.Items[1].VideoID != 2 || page.Items[1].Liked || !page.Items[1].Favorited {
+		t.Fatalf("expected second item favorited only: %+v", page.Items[1])
+	}
+}
+
+// TestAnonymousFeedHidesViewerActionState 验证游客拉取 Feed 时不带任何个人互动状态。
+func TestAnonymousFeedHidesViewerActionState(t *testing.T) {
+	repo := newMemoryFeedRepo(seedFeedItems())
+	repo.SetViewerActionForTest(42, 3, true, true)
+	router := newFeedRouterWithService(applicationfeed.NewService(repo))
+
+	response := performJSONRequest(router, http.MethodGet, "/api/feed-items?limit=2", "", "")
+	requireStatus(t, response, http.StatusOK)
+
+	var page feedAPIResponse
+	decodeJSON(t, response, &page)
+	if len(page.Items) != 2 {
+		t.Fatalf("unexpected feed response: %+v", page)
+	}
+	for _, item := range page.Items {
+		if item.Liked || item.Favorited {
+			t.Fatalf("expected anonymous item without action state: %+v", item)
+		}
+	}
+}
+
 // TestFollowingFeedScene 验证数据库回退读取、未关注过滤和两页游标结果。
 func TestFollowingFeedScene(t *testing.T) {
 	repo := newMemoryFeedRepo(seedFollowingFeedItems())

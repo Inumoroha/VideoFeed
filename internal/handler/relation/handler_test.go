@@ -1,4 +1,4 @@
-﻿package relation
+package relation
 
 import (
 	"context"
@@ -32,10 +32,11 @@ func (relationHandlerRepository) ListFollowers(context.Context, int64, *domainre
 	return []*domainrelation.UserItem{}, nil
 }
 
-// GetUserProfile 返回空资料，供不校验触发者的用例满足仓储接口。
+// GetUserProfile 返回空资料，供关注通知用例满足仓储接口。
 func (relationHandlerRepository) GetUserProfile(context.Context, int64) (*domainrelation.UserProfile, error) {
 	return domainrelation.RestoreUserProfile(0, "", "", ""), nil
 }
+
 // TestHandlerRejectsNilService 验证空服务依赖返回内部错误。
 func TestHandlerRejectsNilService(t *testing.T) {
 	recorder := httptest.NewRecorder()

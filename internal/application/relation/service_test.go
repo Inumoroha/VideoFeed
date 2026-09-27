@@ -1,9 +1,10 @@
-﻿package relation
+package relation
 
 import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -47,10 +48,11 @@ func (r *relationServiceRepository) ListFollowers(_ context.Context, _ int64, _ 
 	return r.followersItems, r.followersErr
 }
 
-// GetUserProfile 返回空资料，供不校验触发者的用例满足仓储接口。
+// GetUserProfile 返回可预测的昵称和头像，供关注通知用例断言触发者展示信息。
 func (r *relationServiceRepository) GetUserProfile(_ context.Context, userID int64) (*domainrelation.UserProfile, error) {
-	return domainrelation.RestoreUserProfile(userID, "", "", ""), nil
+	return domainrelation.RestoreUserProfile(userID, fmt.Sprintf("viewer-%d", userID), fmt.Sprintf("https://example.com/%d.jpg", userID), ""), nil
 }
+
 // TestServiceRejectsUninitializedDependencies 验证服务或仓储未初始化时返回明确错误而不是发生空指针异常。
 func TestServiceRejectsUninitializedDependencies(t *testing.T) {
 	var service *Service
