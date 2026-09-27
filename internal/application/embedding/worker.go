@@ -2,7 +2,10 @@ package embedding
 
 import (
 	"context"
+	"time"
+
 	applicationvideo "github.com/inumoroha/video-feed/internal/application/video"
+	inframetrics "github.com/inumoroha/video-feed/internal/infrastructure/metrics"
 )
 
 // PublishedEventConsumer 消费视频发布事件。
@@ -32,11 +35,16 @@ func (w *VideoEmbeddingWorker) Start(ctx context.Context) error {
 	return w.consumer.ConsumeVideoPublishedForEmbedding(ctx, w.HandleVideoPublished)
 }
 
-// HandleVideoPublished 处理视频发布消息并返回生成或存储错误供消息层重试；缺失服务或事件时忽略。
-func (w *VideoEmbeddingWorker) HandleVideoPublished(ctx context.Context, event *applicationvideo.PublishedEvent) error {
+// HandleVideoPublished 处理视频发布消息并返回生成或存储错误供消息层重试；缺失服务或事件时忽略，并记录任务结果和耗时。
+func (w *VideoEmbeddingWorker) HandleVideoPublished(ctx context.Context, event *applicationvideo.PublishedEvent) (err error) {
+	start := time.Now()
+	defer func() {
+		inframetrics.ObserveWorkerJob("video_embedding", time.Since(start), err)
+	}()
+
 	if w == nil || w.service == nil || event == nil {
 		return nil
 	}
-	_, err := w.service.GenerateForPublishedVideo(ctx, event)
+	_, err = w.service.GenerateForPublishedVideo(ctx, event)
 	return err
 }

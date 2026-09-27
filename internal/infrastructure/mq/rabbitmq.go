@@ -11,6 +11,7 @@ import (
 
 	applicationinteraction "github.com/inumoroha/video-feed/internal/application/interaction"
 	"github.com/inumoroha/video-feed/internal/config"
+	inframetrics "github.com/inumoroha/video-feed/internal/infrastructure/metrics"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -88,14 +89,18 @@ func (r *RabbitMQ) ConsumeActionChanged(ctx context.Context, handler func(contex
 	}
 	go func() {
 		for d := range ds {
+			start := time.Now()
 			var e applicationinteraction.ActionChangedEvent
-			if json.Unmarshal(d.Body, &e) != nil {
+			if decodeErr := json.Unmarshal(d.Body, &e); decodeErr != nil {
+				inframetrics.ObserveWorkerJob("mq_action_changed_decode", time.Since(start), decodeErr)
 				_ = d.Nack(false, false)
 				continue
 			}
-			if handler(ctx, &e) != nil {
+			if consumeErr := handler(ctx, &e); consumeErr != nil {
+				inframetrics.ObserveWorkerJob("mq_action_changed_consume", time.Since(start), consumeErr)
 				_ = d.Nack(false, true)
 			} else {
+				inframetrics.ObserveWorkerJob("mq_action_changed_consume", time.Since(start), nil)
 				_ = d.Ack(false)
 			}
 		}
@@ -230,15 +235,19 @@ func (r *RabbitMQ) consumeVideoPublishedQueue(ctx context.Context, queue string,
 
 	go func() {
 		for delivery := range deliveries {
+			start := time.Now()
 			var event applicationvideo.PublishedEvent
-			if err := json.Unmarshal(delivery.Body, &event); err != nil {
+			if decodeErr := json.Unmarshal(delivery.Body, &event); decodeErr != nil {
+				inframetrics.ObserveWorkerJob("mq_video_published_decode", time.Since(start), decodeErr)
 				_ = delivery.Nack(false, false)
 				continue
 			}
-			if err := handler(ctx, &event); err != nil {
+			if consumeErr := handler(ctx, &event); consumeErr != nil {
+				inframetrics.ObserveWorkerJob("mq_video_published_consume", time.Since(start), consumeErr)
 				_ = delivery.Nack(false, true)
 				continue
 			}
+			inframetrics.ObserveWorkerJob("mq_video_published_consume", time.Since(start), nil)
 			_ = delivery.Ack(false)
 		}
 	}()
@@ -303,16 +312,20 @@ const defaultExposureExchange = "videofeed.exposure"
 const defaultViewEventRecordedQueue = "videofeed.exposure.view_event_recorded"
 const defaultViewEventRecordedRouting = "exposure.view_event_recorded"
 
-// handleViewEventDelivery 解析单条画像消息，成功确认、格式错误丢弃、业务失败重新入队；确认错误与原协议一致不再重试。
+// handleViewEventDelivery 解析单条画像消息，成功确认、格式错误丢弃、业务失败重新入队；确认错误与原协议一致不再重试，并记录任务结果和耗时。
 func handleViewEventDelivery(ctx context.Context, delivery amqp.Delivery, handler func(context.Context, *applicationexposure.ViewEventRecordedEvent) error) {
+	start := time.Now()
 	var event applicationexposure.ViewEventRecordedEvent
-	if err := json.Unmarshal(delivery.Body, &event); err != nil {
+	if decodeErr := json.Unmarshal(delivery.Body, &event); decodeErr != nil {
+		inframetrics.ObserveWorkerJob("mq_view_event_decode", time.Since(start), decodeErr)
 		_ = delivery.Nack(false, false)
 		return
 	}
-	if err := handler(ctx, &event); err != nil {
+	if consumeErr := handler(ctx, &event); consumeErr != nil {
+		inframetrics.ObserveWorkerJob("mq_view_event_consume", time.Since(start), consumeErr)
 		_ = delivery.Nack(false, true)
 		return
 	}
+	inframetrics.ObserveWorkerJob("mq_view_event_consume", time.Since(start), nil)
 	_ = delivery.Ack(false)
 }

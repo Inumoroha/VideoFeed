@@ -12,6 +12,7 @@ import (
 	"time"
 
 	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
+	inframetrics "github.com/inumoroha/video-feed/internal/infrastructure/metrics"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -91,11 +92,9 @@ func (s *Service) RegisterStrategy(strategy Strategy) {
 	s.strategies[scene] = strategy
 }
 
-// GetFeed 根据 scene 选择策略并返回分页结果。
+// GetFeed 根据 scene 选择策略并返回分页结果，并记录场景、结果、耗时和返回条目数。
 func (s *Service) GetFeed(ctx context.Context, req FeedRequest) (*FeedResult, error) {
-	if s == nil {
-		return nil, ErrFeedServiceNotInitialized
-	}
+	start := time.Now()
 	if s == nil {
 		return nil, ErrFeedServiceNotInitialized
 	}
@@ -106,9 +105,16 @@ func (s *Service) GetFeed(ctx context.Context, req FeedRequest) (*FeedResult, er
 
 	strategy, ok := s.strategies[req.Scene]
 	if !ok {
+		inframetrics.ObserveFeed(string(req.Scene), time.Since(start), 0, domainfeed.ErrUnsupportedScene)
 		return nil, domainfeed.ErrUnsupportedScene
 	}
-	return strategy.List(ctx, req)
+	result, err := strategy.List(ctx, req)
+	itemCount := 0
+	if result != nil {
+		itemCount = len(result.Items)
+	}
+	inframetrics.ObserveFeed(string(req.Scene), time.Since(start), itemCount, err)
+	return result, err
 }
 
 // GetTimelineFeed 查询时间线视频流，处理游标分页并生成下一页游标。

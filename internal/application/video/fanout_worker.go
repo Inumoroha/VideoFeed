@@ -2,8 +2,10 @@ package video
 
 import (
 	"context"
-	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
 	"time"
+
+	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
+	inframetrics "github.com/inumoroha/video-feed/internal/infrastructure/metrics"
 )
 
 const defaultFollowerBatchSize = 500
@@ -117,12 +119,17 @@ func (w *FanoutWorker) Start(ctx context.Context) error {
 	return w.consumer.ConsumeVideoPublished(ctx, w.HandleVideoPublished)
 }
 
-// HandleVideoPublished 先预热再按粉丝阈值分发，大作者写发件箱，普通作者分页写收件箱；失败交由消费者重试。
-func (w *FanoutWorker) HandleVideoPublished(ctx context.Context, event *PublishedEvent) error {
+// HandleVideoPublished 先预热再按粉丝阈值分发，大作者写发件箱，普通作者分页写收件箱；失败交由消费者重试，并记录任务结果和耗时。
+func (w *FanoutWorker) HandleVideoPublished(ctx context.Context, event *PublishedEvent) (err error) {
+	start := time.Now()
+	defer func() {
+		inframetrics.ObserveWorkerJob("video_fanout", time.Since(start), err)
+	}()
+
 	if event == nil || event.VideoID <= 0 || event.AuthorID <= 0 {
 		return nil
 	}
-	if err := w.preheat(ctx, event); err != nil {
+	if err = w.preheat(ctx, event); err != nil {
 		return err
 	}
 	if w.repo == nil || w.index == nil {
@@ -145,9 +152,9 @@ func (w *FanoutWorker) HandleVideoPublished(ctx context.Context, event *Publishe
 
 	cursor := int64(0)
 	for {
-		followerIDs, err := w.repo.ListFollowerIDs(ctx, event.AuthorID, cursor, w.batchSize)
-		if err != nil {
-			return err
+		followerIDs, listErr := w.repo.ListFollowerIDs(ctx, event.AuthorID, cursor, w.batchSize)
+		if listErr != nil {
+			return listErr
 		}
 		if len(followerIDs) == 0 {
 			return nil

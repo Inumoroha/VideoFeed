@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	inframetrics "github.com/inumoroha/video-feed/internal/infrastructure/metrics"
 )
 
 const maxUploadBytes = 1024 << 20
@@ -108,9 +109,17 @@ func NewWithProcessor(root string, processor UploadProcessor) *Handler {
 	return &Handler{root: root, processor: processor}
 }
 
-// Create 校验并保存上传文件，视频校验及快启处理失败时删除文件，最后返回原始大小和访问地址。
+// Create 校验并保存上传文件，视频校验及快启处理失败时删除文件，最后返回原始大小和访问地址；同时记录上传类型、结果和耗时。
 func (h *Handler) Create(c *gin.Context) {
+	start := time.Now()
+	kind := "unknown"
+	var resultErr error
+	defer func() {
+		inframetrics.ObserveUpload(kind, time.Since(start), resultErr)
+	}()
+
 	if h == nil || strings.TrimSpace(h.root) == "" {
+		resultErr = errors.New("upload root is not configured")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "upload root is not configured"})
 		return
 	}
@@ -122,6 +131,7 @@ func (h *Handler) Create(c *gin.Context) {
 		defer c.Request.MultipartForm.RemoveAll()
 	}
 	if err != nil {
+		resultErr = err
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "upload too large"})
@@ -131,14 +141,17 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
-	kind, ok := normalizeKind(c.PostForm("kind"))
+	normalizedKind, ok := normalizeKind(c.PostForm("kind"))
 	if !ok {
+		resultErr = errors.New("invalid upload kind")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid upload kind"})
 		return
 	}
+	kind = normalizedKind
 
 	validation, err := validateUploadFile(file, kind)
 	if err != nil {
+		resultErr = err
 		writeUploadValidationError(c, err)
 		return
 	}
@@ -147,25 +160,28 @@ func (h *Handler) Create(c *gin.Context) {
 	filename := fmt.Sprintf("%d-%s%s", time.Now().UnixNano(), randomSuffix(), ext)
 	targetDir := filepath.Join(h.root, kind)
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		resultErr = err
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to prepare upload directory"})
 		return
 	}
 
 	targetPath := filepath.Join(targetDir, filename)
 	if err := c.SaveUploadedFile(file, targetPath); err != nil {
-		_ = os.Remove(targetPath)
+		resultErr = err
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save upload"})
 		return
 	}
 
 	if kind == "video" {
 		if err := h.processor.ValidateVideo(c.Request.Context(), targetPath); err != nil {
+			resultErr = err
 			_ = os.Remove(targetPath)
 			writeUploadProcessingError(c, err)
 			return
 		}
 		if shouldFaststart(validation.Ext) {
 			if err := h.processor.Faststart(c.Request.Context(), targetPath); err != nil {
+				resultErr = err
 				_ = os.Remove(targetPath)
 				writeUploadProcessingError(c, err)
 				return
@@ -336,18 +352,25 @@ func shouldFaststart(ext string) bool {
 // defaultUploadProcessor 使用本机 ffprobe 和 ffmpeg 校验视频并执行无重编码快启处理。
 type defaultUploadProcessor struct{}
 
-// ValidateVideo 探测视频元数据并校验时长、分辨率及音视频编码。
+// ValidateVideo 探测视频元数据并校验时长、分辨率及音视频编码，并记录探测步骤耗时。
 func (defaultUploadProcessor) ValidateVideo(ctx context.Context, path string) error {
+	start := time.Now()
 	metadata, err := probeVideo(ctx, path)
 	if err != nil {
+		inframetrics.ObserveVideoProcessing("probe", time.Since(start), err)
 		return err
 	}
-	return validateVideoMetadata(metadata)
+	err = validateVideoMetadata(metadata)
+	inframetrics.ObserveVideoProcessing("probe", time.Since(start), err)
+	return err
 }
 
-// Faststart 调用受上下文限制的视频快启处理。
+// Faststart 调用受上下文限制的视频快启处理，并记录快启步骤耗时。
 func (defaultUploadProcessor) Faststart(ctx context.Context, path string) error {
-	return faststartVideo(ctx, path)
+	start := time.Now()
+	err := faststartVideo(ctx, path)
+	inframetrics.ObserveVideoProcessing("faststart", time.Since(start), err)
+	return err
 }
 
 // probeResult 接收视频流列表和容器元数据。

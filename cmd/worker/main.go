@@ -15,6 +15,7 @@ import (
 	"github.com/inumoroha/video-feed/internal/database"
 	feedcache "github.com/inumoroha/video-feed/internal/infrastructure/cache/feed"
 	infraredis "github.com/inumoroha/video-feed/internal/infrastructure/cache/redis"
+	inframetrics "github.com/inumoroha/video-feed/internal/infrastructure/metrics"
 	inframq "github.com/inumoroha/video-feed/internal/infrastructure/mq"
 	embedding "github.com/inumoroha/video-feed/internal/infrastructure/persistence/embedding"
 	feed "github.com/inumoroha/video-feed/internal/infrastructure/persistence/feed"
@@ -25,6 +26,9 @@ import (
 
 const configPath = "./configs/config.yaml"
 
+// metricsAddr 定义 worker 指标服务的监听地址，供 Prometheus 抓取。
+const metricsAddr = ":9091"
+
 // main 加载共享配置并监听终止信号；运行失败时在资源释放完成后以非零状态退出。
 func main() {
 	cfg, err := config.Load(configPath)
@@ -33,6 +37,12 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	// 独立指标服务暴露 worker 指标，随机终止信号到达时优雅关闭。
+	go func() {
+		if err := inframetrics.RunServer(ctx, metricsAddr); err != nil {
+			log.Printf("metrics server failed: %v", err)
+		}
+	}()
 	if err := run(ctx, cfg); err != nil {
 		log.Fatalf("worker failed: %v", err)
 	}

@@ -34,6 +34,7 @@ import (
 	videohandler "github.com/inumoroha/video-feed/internal/handler/video"
 	feedcache "github.com/inumoroha/video-feed/internal/infrastructure/cache/feed"
 	infraredis "github.com/inumoroha/video-feed/internal/infrastructure/cache/redis"
+	inframetrics "github.com/inumoroha/video-feed/internal/infrastructure/metrics"
 	inframq "github.com/inumoroha/video-feed/internal/infrastructure/mq"
 	feedpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/feed"
 	interactionpersistence "github.com/inumoroha/video-feed/internal/infrastructure/persistence/interaction"
@@ -123,6 +124,8 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	}
 	uploadHandler := uploadhandler.NewHandler(uploadRoot)
 	g.GET("/health", handler.Health)
+	// 暴露默认注册表的 Prometheus 指标，供 Prometheus 抓取。
+	g.GET("/metrics", gin.WrapH(inframetrics.Handler()))
 	g.Static("/uploads", uploadRoot)
 
 	registerRoutes(g, userHandler, videoHandler, feedHandler, uploadHandler, jwtManager, interactionHandler, relationHandler, exposureHandler)

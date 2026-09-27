@@ -8,6 +8,7 @@ import (
 	applicationinteraction "github.com/inumoroha/video-feed/internal/application/interaction"
 	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
 	domaininteraction "github.com/inumoroha/video-feed/internal/domain/interaction"
+	inframetrics "github.com/inumoroha/video-feed/internal/infrastructure/metrics"
 	"github.com/redis/go-redis/v9"
 	"strconv"
 	"strings"
@@ -140,29 +141,36 @@ func clampRedisCount(value int) int {
 // NewFeedCache 创建支持事务型互动状态更新的 Feed 缓存。
 func NewFeedCache(client redisWatchCmdable) *FeedCache { return &FeedCache{client: client} }
 
-// GetPage 读取轻量 Feed 页。
+// GetPage 读取轻量 Feed 页，并记录页缓存命中、未命中或错误。
 func (c *FeedCache) GetPage(ctx context.Context, key string) (*applicationfeed.FeedPage, bool, error) {
 	b, e := c.client.Get(ctx, key).Bytes()
 	if e == redis.Nil {
+		inframetrics.ObserveCacheRead("page", 1, 0, nil)
 		return nil, false, nil
 	}
 	if e != nil {
+		inframetrics.ObserveCacheRead("page", 1, 0, e)
 		return nil, false, e
 	}
 	var p applicationfeed.FeedPage
 	if e = json.Unmarshal(b, &p); e != nil {
+		inframetrics.ObserveCacheRead("page", 1, 0, e)
 		return nil, false, e
 	}
+	inframetrics.ObserveCacheRead("page", 1, 1, nil)
 	return &p, true, nil
 }
 
-// SetPage 写入轻量 Feed 页。
+// SetPage 写入轻量 Feed 页，并记录页缓存写入结果。
 func (c *FeedCache) SetPage(ctx context.Context, key string, p *applicationfeed.FeedPage, ttl time.Duration) error {
 	b, e := json.Marshal(p)
 	if e != nil {
+		inframetrics.ObserveCacheWrite("page", 1, e)
 		return e
 	}
-	return c.client.Set(ctx, key, b, ttl).Err()
+	e = c.client.Set(ctx, key, b, ttl).Err()
+	inframetrics.ObserveCacheWrite("page", 1, e)
+	return e
 }
 
 // GetCards 批量读取视频卡片缓存。
@@ -170,7 +178,7 @@ func (c *FeedCache) GetCards(ctx context.Context, ids []int64) (map[int64]*domai
 	return c.getCards(ctx, ids, feedCardKey)
 }
 
-// SetCards 批量写入视频卡片缓存。
+// SetCards 批量写入视频卡片缓存，并记录卡片缓存写入结果。
 func (c *FeedCache) SetCards(ctx context.Context, m map[int64]*domainfeed.FeedCard, ttl time.Duration) error {
 	pipe := c.client.Pipeline()
 	queued := false
@@ -180,6 +188,7 @@ func (c *FeedCache) SetCards(ctx context.Context, m map[int64]*domainfeed.FeedCa
 		}
 		b, e := json.Marshal(v)
 		if e != nil {
+			inframetrics.ObserveCacheWrite("card", 1, e)
 			return e
 		}
 		pipe.Set(ctx, feedCardKey(id), b, ttl)
@@ -189,6 +198,7 @@ func (c *FeedCache) SetCards(ctx context.Context, m map[int64]*domainfeed.FeedCa
 		return nil
 	}
 	_, e := pipe.Exec(ctx)
+	inframetrics.ObserveCacheWrite("card", len(m), e)
 	return e
 }
 
@@ -206,6 +216,7 @@ func getStats(ctx context.Context, client redisStatCacheClient, videoIDs []int64
 
 	values, err := client.MGet(ctx, cacheKeys(videoIDs, feedStatKey)...).Result()
 	if err != nil {
+		inframetrics.ObserveCacheRead("stat", len(videoIDs), 0, err)
 		return nil, err
 	}
 	for index, value := range values {
@@ -236,10 +247,11 @@ func getStats(ctx context.Context, client redisStatCacheClient, videoIDs []int64
 		stats[videoID] = stat
 		_ = setActionStatJSON(ctx, client, feedStatKey(videoID), stat)
 	}
+	inframetrics.ObserveCacheRead("stat", len(videoIDs), len(stats), nil)
 	return stats, nil
 }
 
-// SetStats 批量写入视频计数缓存。
+// SetStats 批量写入视频计数缓存，并记录计数缓存写入结果。
 func (c *FeedCache) SetStats(ctx context.Context, m map[int64]*domainfeed.FeedStat, ttl time.Duration) error {
 	pipe := c.client.Pipeline()
 	queued := false
@@ -249,6 +261,7 @@ func (c *FeedCache) SetStats(ctx context.Context, m map[int64]*domainfeed.FeedSt
 		}
 		b, e := json.Marshal(v)
 		if e != nil {
+			inframetrics.ObserveCacheWrite("stat", 1, e)
 			return e
 		}
 		pipe.Set(ctx, feedStatKey(id), b, ttl)
@@ -258,15 +271,18 @@ func (c *FeedCache) SetStats(ctx context.Context, m map[int64]*domainfeed.FeedSt
 		return nil
 	}
 	_, e := pipe.Exec(ctx)
+	inframetrics.ObserveCacheWrite("stat", len(m), e)
 	return e
 }
 
-// SetVideoStat 写入单个视频的计数 JSON 缓存，用于评论写入后刷新 Feed 展示；无效统计直接跳过。
+// SetVideoStat 写入单个视频的计数 JSON 缓存，用于评论写入后刷新 Feed 展示；无效统计直接跳过，并记录写入结果。
 func (c *FeedCache) SetVideoStat(ctx context.Context, stat *domaininteraction.VideoStat) error {
 	if !videoStatCacheable(stat) {
 		return nil
 	}
-	return setActionStatJSON(ctx, c.client, feedStatKey(stat.VideoID), videoStatToFeedStat(stat))
+	err := setActionStatJSON(ctx, c.client, feedStatKey(stat.VideoID), videoStatToFeedStat(stat))
+	inframetrics.ObserveCacheWrite("stat", 1, err)
+	return err
 }
 
 // videoStatCacheable 判断统计是否具备可缓存的视频编号。
@@ -358,6 +374,8 @@ func hotWindowMinuteKeys(e time.Time) []string {
 	}
 	return r
 }
+
+// getCards 批量读取卡片缓存，并记录卡片缓存命中、未命中或错误。
 func (c *FeedCache) getCards(ctx context.Context, ids []int64, key func(int64) string) (map[int64]*domainfeed.FeedCard, error) {
 	m := map[int64]*domainfeed.FeedCard{}
 	if len(ids) == 0 {
@@ -365,6 +383,7 @@ func (c *FeedCache) getCards(ctx context.Context, ids []int64, key func(int64) s
 	}
 	vs, e := c.client.MGet(ctx, cacheKeys(ids, key)...).Result()
 	if e != nil {
+		inframetrics.ObserveCacheRead("card", len(ids), 0, e)
 		return nil, e
 	}
 	for i, v := range vs {
@@ -381,6 +400,7 @@ func (c *FeedCache) getCards(ctx context.Context, ids []int64, key func(int64) s
 		}
 		m[x.VideoID] = &x
 	}
+	inframetrics.ObserveCacheRead("card", len(ids), len(m), nil)
 	return m, nil
 }
 func cacheKeys(ids []int64, b func(int64) string) []string {

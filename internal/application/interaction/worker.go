@@ -2,7 +2,10 @@ package interaction
 
 import (
 	"context"
+	"time"
+
 	domaininteraction "github.com/inumoroha/video-feed/internal/domain/interaction"
+	inframetrics "github.com/inumoroha/video-feed/internal/infrastructure/metrics"
 )
 
 // ActionEventConsumer 消费互动异步事件。
@@ -29,11 +32,17 @@ func (w *ActionWorker) Start(ctx context.Context) error {
 	return w.consumer.ConsumeActionChanged(ctx, w.HandleActionChanged)
 }
 
-// HandleActionChanged 处理单条互动事件。
+// HandleActionChanged 处理单条互动事件，并记录任务结果和耗时。
 func (w *ActionWorker) HandleActionChanged(ctx context.Context, e *ActionChangedEvent) error {
+	start := time.Now()
+	var err error
+	defer func() {
+		inframetrics.ObserveWorkerJob("interaction_action_changed", time.Since(start), err)
+	}()
+
 	if e == nil {
 		return nil
 	}
-	_, _, _, err := w.repo.SetAction(ctx, e.UserID, e.VideoID, e.ActionType, e.Active, e.IdempotencyKey)
+	_, _, _, err = w.repo.SetAction(ctx, e.UserID, e.VideoID, e.ActionType, e.Active, e.IdempotencyKey)
 	return err
 }
