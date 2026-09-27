@@ -584,8 +584,11 @@ function FeedPage({ feedScene, session, onNavigate }) {
         fetchFeedPage(feedScene, session.token, "", requestID)
             .then((data) => {
                 if (!live || generation !== feedGenerationRef.current) return;
+                const nextItems = (data.items || []).map((item) => mapFeedItem(item, feedScene, requestID));
                 setSwipe(null);
-                setItems((data.items || []).map((item) => mapFeedItem(item, feedScene, requestID)));
+                setItems(nextItems);
+                setLiked(viewerActionMap(nextItems, "liked"));
+                setFavorited(viewerActionMap(nextItems, "favorited"));
                 setIndex(0);
                 setCommentsOpen(false);
                 setNextCursor(data.next_cursor || "");
@@ -628,6 +631,8 @@ function FeedPage({ feedScene, session, onNavigate }) {
                 if (generation !== feedGenerationRef.current) return;
                 const nextItems = (data.items || []).map((item) => mapFeedItem(item, feedScene, requestID));
                 setItems((state) => appendFeedItems(state, nextItems));
+                mergeViewerActions(nextItems, setLiked, "liked");
+                mergeViewerActions(nextItems, setFavorited, "favorited");
                 setNextCursor(data.next_cursor || "");
                 setHasMore(Boolean(data.has_more && data.next_cursor));
             })
@@ -937,7 +942,11 @@ function FeedPage({ feedScene, session, onNavigate }) {
         apiRequest(`/api/videos/${current.video_id}/comments?limit=50`)
             .then((data) => {
                 if (!live) return;
-                setComments(data.items || []);
+                const nextComments = data.items || [];
+                setComments(nextComments);
+                if (!data.has_more && nextComments.length > Number(current.comment_count || 0)) {
+                    updateCurrentItem(current.video_id, { comment_count: nextComments.length });
+                }
                 setCommentsState("ready");
             })
             .catch((error) => {
@@ -949,7 +958,7 @@ function FeedPage({ feedScene, session, onNavigate }) {
         return () => {
             live = false;
         };
-    }, [current]);
+    }, [current, updateCurrentItem]);
 
     useEffect(() => {
         if (!commentsOpen) return undefined;
@@ -1863,27 +1872,37 @@ function MessagesPage({ session, onNavigate, onUnreadChange }) {
                 {state === "ready" && items.length === 0 && <PageMessage icon="notifications" title="暂无消息" />}
                 {error && items.length > 0 && <p className="form-message">{error}</p>}
                 <div className="messages-list">
-                    {items.map((message) => (
-                        <button
-                            className={`message-item ${message.is_read ? "read" : "unread"}`}
-                            key={message.id}
-                            type="button"
-                            onClick={() => markMessageRead(message)}
-                            disabled={busy}
-                        >
-                            <span className={`message-icon ${message.is_read ? "" : "active"}`}>
-                                <span className="material-symbols-outlined">{messageIcon(message.type)}</span>
-                            </span>
-                            <span className="message-copy">
-                                <span className="message-title-row">
-                                    <strong>{message.title}</strong>
-                                    <small>{formatRelativeTime(message.created_at)}</small>
+                    {items.map((message) => {
+                        const actor = messageActor(message);
+                        const body = messageBody(message);
+                        return (
+                            <button
+                                className={`message-item ${message.is_read ? "read" : "unread"}`}
+                                key={message.id}
+                                type="button"
+                                onClick={() => markMessageRead(message)}
+                                disabled={busy}
+                            >
+                                <span className={`message-icon ${message.is_read ? "" : "active"}`}>
+                                    <span className="material-symbols-outlined">{messageIcon(message.type)}</span>
                                 </span>
-                                <span>{message.content}</span>
-                            </span>
-                            <span className="message-state">{message.is_read ? "已读" : busyID === message.id ? "处理中" : "未读"}</span>
-                        </button>
-                    ))}
+                                <span className="message-copy">
+                                    <span className="message-title-row">
+                                        <strong>{message.title}</strong>
+                                        <small>{formatRelativeTime(message.created_at)}</small>
+                                    </span>
+                                    {actor && (
+                                        <span className="message-actor-row">
+                                            <img src={actor.avatar_url} alt="" />
+                                            <strong>{actor.nickname}</strong>
+                                        </span>
+                                    )}
+                                    <span className="message-content-text">{body}</span>
+                                </span>
+                                <span className="message-state">{message.is_read ? "已读" : busyID === message.id ? "处理中" : "未读"}</span>
+                            </button>
+                        );
+                    })}
                 </div>
                 {hasMore && (
                     <button className="ghost-button messages-more" onClick={() => loadMessages(nextCursor, true)} disabled={busy}>
@@ -1927,6 +1946,31 @@ function appendMessages(currentItems, nextItems) {
         merged.push(item);
     }
     return merged;
+}
+
+// messageActor 从消息字段解析触发者展示信息，缺失时回退到旧正文前缀或默认头像。
+function messageActor(message) {
+    const id = Number(message?.actor_id || 0);
+    const nickname = (message?.actor_nickname || legacyMessageActorName(message?.content) || (id ? `用户_${id}` : "")).trim();
+    if (!id && !nickname) return null;
+    return {
+        id,
+        nickname: nickname || `用户_${id}`,
+        avatar_url: message?.actor_avatar_url || image.currentUser
+    };
+}
+
+// messageBody 返回消息正文；旧消息会去掉正文里的用户编号前缀，新消息保留原始内容。
+function messageBody(message) {
+    const content = String(message?.content || "").trim();
+    if (message?.actor_id || message?.actor_nickname) return content;
+    return content.replace(/^用户\s*\d+\s*/, "").trim() || content;
+}
+
+// legacyMessageActorName 从旧消息正文的用户编号前缀还原触发者昵称。
+function legacyMessageActorName(content) {
+    const match = /^用户\s*(\d+)/.exec(String(content || "").trim());
+    return match ? `用户_${match[1]}` : "";
 }
 
 // messageIcon 将四种消息类型映射为图标，未知类型使用通知图标。
@@ -3110,6 +3154,31 @@ function appendFeedItems(currentItems, nextItems) {
   return merged;
 }
 
+// viewerActionMap 把 Feed 条目的点赞或收藏状态整理为视频标识到布尔值的映射。
+function viewerActionMap(items, field) {
+  const map = {};
+  for (const item of items) {
+    if (item?.video_id && item[field]) {
+      map[item.video_id] = true;
+    }
+  }
+  return map;
+}
+
+// mergeViewerActions 将续页条目的点赞或收藏状态合并进已有映射，显式写入已取消的条目。
+function mergeViewerActions(items, setMap, field) {
+  if (!items.length) return;
+  setMap((state) => {
+    const next = { ...state };
+    for (const item of items) {
+      if (item?.video_id) {
+        next[item.video_id] = Boolean(item[field]);
+      }
+    }
+    return next;
+  });
+}
+
 function readStoredUser() {
     try {
         const raw = localStorage.getItem(USER_KEY);
@@ -3317,6 +3386,8 @@ function mapFeedItem(item, feedScene = "timeline", requestID = "") {
         like_count: item.like_count,
         comment_count: item.comment_count,
         favorite_count: item.favorite_count,
+        liked: Boolean(item.liked),
+        favorited: Boolean(item.favorited),
         author: item.author_nickname || `创作者_${item.author_id}`,
         avatar_url: item.author_avatar_url || image.creator,
         description: item.description || "",
