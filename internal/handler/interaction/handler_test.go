@@ -1,4 +1,4 @@
-package interaction
+﻿package interaction
 
 import (
 	"context"
@@ -55,6 +55,10 @@ func (r *interactionHandlerRepository) DeleteComment(_ context.Context, _ int64,
 	return r.deleteComment, 0, nil
 }
 
+// GetUserProfile 返回最小用户资料，供不校验触发者的用例满足仓储接口。
+func (r *interactionHandlerRepository) GetUserProfile(_ context.Context, userID int64) (*domaininteraction.UserProfile, error) {
+	return &domaininteraction.UserProfile{ID: userID}, nil
+}
 // TestLikeReturnsAllCounts 验证点赞 handler 返回两个统计字段并传递启用状态。
 func TestLikeReturnsAllCounts(t *testing.T) {
 	repository := &interactionHandlerRepository{

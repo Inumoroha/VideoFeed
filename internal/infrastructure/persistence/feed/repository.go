@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
+	domaininteraction "github.com/inumoroha/video-feed/internal/domain/interaction"
 	domainrelation "github.com/inumoroha/video-feed/internal/domain/relation"
 	domainvideo "github.com/inumoroha/video-feed/internal/domain/video"
 	"gorm.io/gorm"
@@ -16,6 +17,12 @@ const hotScoreExpression = "COALESCE(vs.like_count, 0) * 3 + COALESCE(vs.comment
 // Repository 使用 GORM 持久化信息流数据。
 type Repository struct {
 	db *gorm.DB
+}
+
+// viewerActionStateModel 接收当前用户互动状态查询的视频编号和动作类型。
+type viewerActionStateModel struct {
+	VideoID    int64
+	ActionType string
 }
 
 var _ domainfeed.Repository = (*Repository)(nil)
@@ -269,6 +276,46 @@ func (r *Repository) BatchGetFeedStats(ctx context.Context, videoIDs []int64) (m
 		stats[models[index].VideoID] = &models[index]
 	}
 	return stats, nil
+}
+
+// BatchGetViewerActionStates 批量读取当前用户对视频的点赞和收藏状态，未命中按未互动处理。
+func (r *Repository) BatchGetViewerActionStates(ctx context.Context, viewerID int64, videoIDs []int64) (map[int64]*domainfeed.ViewerActionState, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("feed repository is not initialized")
+	}
+	states := map[int64]*domainfeed.ViewerActionState{}
+	if viewerID <= 0 || len(videoIDs) == 0 {
+		return states, nil
+	}
+	for _, videoID := range videoIDs {
+		states[videoID] = &domainfeed.ViewerActionState{VideoID: videoID}
+	}
+
+	var models []viewerActionStateModel
+	err := r.db.WithContext(ctx).
+		Table("interaction_action").
+		Select("video_id, action_type").
+		Where("user_id = ? AND video_id IN ? AND status = ?", viewerID, videoIDs, domaininteraction.ActionStatusActive).
+		Where("action_type IN ?", []string{domaininteraction.ActionTypeLike, domaininteraction.ActionTypeFavorite}).
+		Scan(&models).
+		Error
+	if err != nil {
+		return nil, err
+	}
+	for _, model := range models {
+		state := states[model.VideoID]
+		if state == nil {
+			state = &domainfeed.ViewerActionState{VideoID: model.VideoID}
+			states[model.VideoID] = state
+		}
+		switch model.ActionType {
+		case domaininteraction.ActionTypeLike:
+			state.Liked = true
+		case domaininteraction.ActionTypeFavorite:
+			state.Favorited = true
+		}
+	}
+	return states, nil
 }
 
 // basePageQuery 创建携带作者编号的公开视频分页查询。

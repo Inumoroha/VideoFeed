@@ -28,6 +28,14 @@ type relationUserModel struct {
 	FollowedAt time.Time `gorm:"column:followed_at"`
 }
 
+// relationUserProfileModel 保存触发通知用户的展示资料查询结果。
+type relationUserProfileModel struct {
+	UserID    int64
+	Nickname  string
+	AvatarURL string
+	Bio       string
+}
+
 // New 创建关系仓储实现。
 func New(db *gorm.DB) *Repository {
 	return &Repository{gormDB: db}
@@ -199,6 +207,34 @@ func (r *Repository) ListFollowers(ctx context.Context, userID int64, cursor *do
 	}
 
 	return scanUserItems(query.Order("f.updated_at DESC").Order("f.user_id DESC").Limit(limit))
+}
+
+// GetUserProfile 读取正常状态用户的展示资料，用于关注通知展示触发者；用户不存在或异常时返回目标用户错误。
+func (r *Repository) GetUserProfile(ctx context.Context, userID int64) (*domainrelation.UserProfile, error) {
+	if err := r.validateRepository(); err != nil {
+		return nil, err
+	}
+	if userID <= 0 {
+		return nil, domainrelation.ErrTargetUserNotFound
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var model relationUserProfileModel
+	err := r.gormDB.WithContext(ctx).
+		Table("users").
+		Select("id AS user_id, nickname, avatar_url, bio").
+		Where("id = ? AND status = ?", userID, domainuser.StatusNormal).
+		Take(&model).
+		Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domainrelation.ErrTargetUserNotFound
+		}
+		return nil, err
+	}
+	return domainrelation.RestoreUserProfile(model.UserID, model.Nickname, model.AvatarURL, model.Bio), nil
 }
 
 // scanUserItems 将用户列表查询结果恢复为领域展示对象。

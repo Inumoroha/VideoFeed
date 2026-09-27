@@ -261,6 +261,32 @@ func (c *FeedCache) SetStats(ctx context.Context, m map[int64]*domainfeed.FeedSt
 	return e
 }
 
+// SetVideoStat 写入单个视频的计数 JSON 缓存，用于评论写入后刷新 Feed 展示；无效统计直接跳过。
+func (c *FeedCache) SetVideoStat(ctx context.Context, stat *domaininteraction.VideoStat) error {
+	if !videoStatCacheable(stat) {
+		return nil
+	}
+	return setActionStatJSON(ctx, c.client, feedStatKey(stat.VideoID), videoStatToFeedStat(stat))
+}
+
+// videoStatCacheable 判断统计是否具备可缓存的视频编号。
+func videoStatCacheable(stat *domaininteraction.VideoStat) bool {
+	return stat != nil && stat.VideoID > 0
+}
+
+// videoStatToFeedStat 将互动计数快照转换为 Feed 展示计数，空快照返回空值。
+func videoStatToFeedStat(stat *domaininteraction.VideoStat) *domainfeed.FeedStat {
+	if stat == nil {
+		return nil
+	}
+	return &domainfeed.FeedStat{
+		VideoID:       stat.VideoID,
+		LikeCount:     stat.LikeCount,
+		CommentCount:  stat.CommentCount,
+		FavoriteCount: stat.FavoriteCount,
+	}
+}
+
 // AddHotScore 将互动热度写入分钟粒度的 Redis ZSET。
 func (c *FeedCache) AddHotScore(ctx context.Context, videoID int64, delta int, at time.Time) error {
 	if videoID <= 0 || delta == 0 {

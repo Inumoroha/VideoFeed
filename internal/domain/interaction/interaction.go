@@ -29,6 +29,13 @@ type VideoStat struct {
 	FavoriteCount int
 }
 
+// UserProfile 保存互动消息需要展示的用户资料。
+type UserProfile struct {
+	ID        int64
+	Nickname  string
+	AvatarURL string
+}
+
 // Action 表示用户对视频执行的点赞或收藏动作及其当前状态。
 type Action struct {
 	ID             int64

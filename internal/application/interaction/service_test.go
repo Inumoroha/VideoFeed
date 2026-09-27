@@ -1,4 +1,4 @@
-package interaction
+﻿package interaction
 
 import (
 	"context"
@@ -62,6 +62,10 @@ func (r *interactionServiceRepository) DeleteComment(context.Context, int64, int
 	return r.deleteComment, r.deleteCount, r.deleteErr
 }
 
+// GetUserProfile 返回最小用户资料，供不校验触发者的用例满足仓储接口。
+func (r *interactionServiceRepository) GetUserProfile(_ context.Context, userID int64) (*domaininteraction.UserProfile, error) {
+	return &domaininteraction.UserProfile{ID: userID}, nil
+}
 // TestServiceRejectsUninitializedDependencies 验证服务依赖缺失时返回明确错误。
 func TestServiceRejectsUninitializedDependencies(t *testing.T) {
 	var service *Service

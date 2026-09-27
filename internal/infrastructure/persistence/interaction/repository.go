@@ -34,6 +34,13 @@ type commentWithUserModel struct {
 	UpdatedAt      time.Time `gorm:"column:updated_at"`
 }
 
+// userProfileModel 接收用户展示资料查询结果。
+type userProfileModel struct {
+	ID        int64
+	Nickname  string
+	AvatarURL string
+}
+
 // New 创建基于 GORM 数据库实例的互动仓储。
 func New(db *gorm.DB) *Repository {
 	return &Repository{db: db}
@@ -665,7 +672,37 @@ func isDuplicateKeyError(err error) bool {
 	return errors.Is(err, gorm.ErrDuplicatedKey)
 }
 
+// mapUserError 把 GORM 找不到记录转换为互动领域的用户 ID 错误。
+func mapUserError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domaininteraction.ErrInvalidUserID
+	}
+	return err
+}
+
 var _ domaininteraction.Repository = (*Repository)(nil)
+
+// GetUserProfile 读取正常状态用户的展示资料，用于互动通知展示触发者。
+func (r *Repository) GetUserProfile(ctx context.Context, userID int64) (*domaininteraction.UserProfile, error) {
+	var model userProfileModel
+	err := r.db.WithContext(ctx).
+		Table("users").
+		Select("id, nickname, avatar_url").
+		Where("id = ? AND status = ?", userID, domainuser.StatusNormal).
+		Take(&model).
+		Error
+	if err != nil {
+		return nil, mapUserError(err)
+	}
+	return &domaininteraction.UserProfile{
+		ID:        model.ID,
+		Nickname:  strings.TrimSpace(model.Nickname),
+		AvatarURL: strings.TrimSpace(model.AvatarURL),
+	}, nil
+}
 
 // GetVideoAuthorID 读取公开视频作者 ID，用于互动消息通知。
 func (r *Repository) GetVideoAuthorID(ctx context.Context, videoID int64) (int64, error) {

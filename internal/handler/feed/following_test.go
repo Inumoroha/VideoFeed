@@ -1,4 +1,4 @@
-package feed
+﻿package feed
 
 import (
 	"context"
@@ -226,6 +226,10 @@ func (r *memoryFeedRepo) BatchGetFeedStats(ctx context.Context, videoIDs []int64
 	return stats, nil
 }
 
+// BatchGetViewerActionStates 返回空查看者互动状态，供不校验互动状态的用例满足仓储接口。
+func (r *memoryFeedRepo) BatchGetViewerActionStates(context.Context, int64, []int64) (map[int64]*domainfeed.ViewerActionState, error) {
+	return map[int64]*domainfeed.ViewerActionState{}, nil
+}
 // TestFollowingFeedScene 验证数据库回退读取、未关注过滤和两页游标结果。
 func TestFollowingFeedScene(t *testing.T) {
 	repo := newMemoryFeedRepo(seedFollowingFeedItems())
