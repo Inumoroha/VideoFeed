@@ -1,6 +1,6 @@
 # API 与独立 worker 部署
 
-API 处理 HTTP 请求并发布消息；独立 worker 负责互动异步落库、关注流分发/预热以及视频向量生成。两者必须连接相同 PostgreSQL、Redis、RabbitMQ，并使用一致的交换机、队列和路由键配置。worker 没有 HTTP 端口，也没有 `/health` 接口。
+API 处理 HTTP 请求并发布消息；独立 worker 负责互动异步落库、关注流分发/预热以及视频向量生成。两者必须连接相同 PostgreSQL、Redis、RabbitMQ，并使用一致的交换机、队列和路由键配置。worker 不提供 `/health` 接口，只提供 `9091` 端口的指标服务。
 
 ## 本地开发
 
@@ -12,7 +12,7 @@ go run ./cmd/worker
 npm --prefix web run dev
 ```
 
-也可以使用 `bash scripts/start.sh` 同时启动三个进程。脚本保留原有可用端口选择和 API 绑定失败重试；任一服务退出时清理其他服务，退出时停止 worker。Windows 使用 taskkill 清理进程树；Unix 使用 pgrep（需要系统提供）递归清理 go run/npm 的子进程。默认 API 9000、前端 5173，worker 不占监听端口。
+也可以使用 `bash scripts/start.sh` 同时启动三个进程。脚本保留原有可用端口选择和 API 绑定失败重试；任一服务退出时清理其他服务，退出时停止 worker。Windows 使用 taskkill 清理进程树；Unix 使用 pgrep（需要系统提供）递归清理 go run/npm 的子进程。默认 API 9000、前端 5173；worker 监听 9091 提供指标，不提供健康检查接口。
 
 worker 读取 `./configs/config.yaml`，要求 RabbitMQ URL、Redis 地址非空。复用现有完整配置加载器，所以即使 worker 不提供 HTTP/JWT 接口，仍须配置有效的 server、auth 等字段。默认优先使用环境变量；不要混用本地配置的 `gcfeed.interaction` 与 Docker 配置的 `videofeed.interaction` 队列。
 
@@ -30,7 +30,7 @@ docker compose down
 
 根目录 `Dockerfile` 同时构建已有 `gcfeed-api`（保留现有启动命令）和新 `videofeed-worker`。Compose 的 api 与 worker 均使用根目录构建上下文，挂载 `configs/config.docker.yaml`，传入相同 `DATABASE_URL` 和 `JWT_SECRET`。二者均等待 PostgreSQL、Redis 和 RabbitMQ 健康后启动；worker 启动失败时按 `on-failure` 重启。API 仍通过 `/health` 检查，worker 不配置不存在的 HTTP 健康检查。
 
-容器内地址：PostgreSQL `postgres:5432`、Redis `redis:6379`、RabbitMQ `rabbitmq:5672`；宿主机端口分别为 5433、6379、5672/15672，API 9000，Web 5173。上传卷仅挂载 API，worker 不读取媒体文件；数据库、缓存、消息和上传卷保持原有名称与路径。
+容器内地址：PostgreSQL `postgres:5432`、Redis `redis:6379`、RabbitMQ `rabbitmq:5672`；宿主机端口分别为 5433、6379、5672/15672，API 9000，Web 5173，Prometheus 9090，Grafana 3000。上传卷仅挂载 API，worker 不读取媒体文件；数据库、缓存、消息和上传卷保持原有名称与路径。
 
 Compose 为新 RabbitMQ 数据卷初始化与 Docker 配置匹配的开发用户 `rabbitmq`。已有数据卷不会因 `RABBITMQ_DEFAULT_USER/PASS` 改变已有账户；升级时应配置实际可用账户或在 RabbitMQ 中创建匹配用户并授予对应虚拟主机权限，不需要删除数据卷。示例开发密码应在部署环境中替换。
 
@@ -82,6 +82,21 @@ python -B scripts/verify_exposure_live.py --embedding --output docs/worker-embed
 
 
 消息中心前端地址为 `http://127.0.0.1:5173/messages`。Vite 复用现有 `/api` 代理，生产 Nginx 的 `try_files ... /index.html` 支持直接访问和刷新该路径；不需要新增服务、环境变量或代理规则。前端不需要 `INTERNAL_TOKEN`。运行 `npm --prefix web test` 和 `npm --prefix web run build` 验证，生产镜像仍由 `web/Dockerfile` 构建。
+
+## 监控服务
+
+Compose 新增 `prometheus` 与 `grafana` 两个服务，使用 `prom/prometheus:v3.1.0` 和 `grafana/grafana:11.4.0`，并新增 `prometheus_data`、`grafana_data` 两个数据卷。Prometheus 等待 API 健康后启动，Grafana 依赖 Prometheus；API 与 worker 不再额外等待监控服务。
+
+抓取目标定义在 `monitoring/prometheus.yml`：`videofeed-api` 抓取 `api:9000/metrics`，`videofeed-worker` 抓取 `worker:9091/metrics`，`scrape_interval` 为 15 秒。API 的 `/metrics` 由 `internal/router` 注册，worker 的指标服务由 `cmd/worker` 在 `:9091` 启动并在上下文取消时优雅关闭。worker 未映射宿主机端口，只能经 Compose 网络抓取。
+
+Grafana 通过 `monitoring/grafana/provisioning` 自动配置数据源与看板目录，看板文件为 `monitoring/grafana/dashboards/videofeed-overview.json`，访问地址 `http://127.0.0.1:3000/d/videofeed-overview/videofeed-overview`。默认账号密码为 `admin` / `admin`，属于本地示例值，部署前必须通过环境变量替换。
+
+```bash
+docker compose up -d prometheus grafana
+docker compose logs -f prometheus grafana
+```
+
+限制：`deploy.yaml` 的 Kubernetes 清单本次未包含 Prometheus 与 Grafana，也没有为 worker 增加 `9091` 的 Service 或探针，因此 Kubernetes 环境无法抓取 worker 指标；如需在集群内监控，需要另行为 API 和 worker 增加 Service 与抓取配置。
 
 ## 播放优化迁移
 

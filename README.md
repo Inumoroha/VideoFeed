@@ -16,6 +16,7 @@ VideoFeed 是一个面向短视频场景的 Feed 系统工程。项目用 Go API
 - 播放配置回退、资源预加载、播放器质量采集和幂等上报，详见 [播放模块](docs/modules/playback.md)。
 - 上传视频/图片校验与 MP4/MOV faststart；本地 API 需提供 FFmpeg/ffprobe，容器镜像已包含，详见 [视频模块](docs/modules/video.md)。
 - React + Vite Web 客户端。
+- Prometheus 指标与 Grafana 看板：API 暴露 `/metrics`，worker 独立 `9091` 指标服务，Compose 提供 Prometheus 与 Grafana，详见 [监控模块](docs/modules/monitoring.md)。
 - API 流程测试和 Web 生产构建。
 
 重点待补能力：
@@ -23,7 +24,7 @@ VideoFeed 是一个面向短视频场景的 Feed 系统工程。项目用 Go API
 - 审核后台。
 - 后台运营。
 - 系统治理。
-- 监控看板。
+- 告警规则与告警事件。
 
 ## 快速启动
 
@@ -64,7 +65,7 @@ docker compose down
 docker compose down -v
 ```
 
-Compose 启动 `postgres`、`redis`、`rabbitmq`、`api`、`worker`、`web` 六个服务；健康检查、数据卷和启动依赖见 [部署说明](docs/deployment.md)。
+Compose 启动 `postgres`、`redis`、`rabbitmq`、`api`、`worker`、`web`、`prometheus`、`grafana` 八个服务；健康检查、数据卷和启动依赖见 [部署说明](docs/deployment.md)。
 
 服务地址：
 
@@ -72,10 +73,15 @@ Compose 启动 `postgres`、`redis`、`rabbitmq`、`api`、`worker`、`web` 六�
 | --- | --- |
 | Web | `http://127.0.0.1:5173` |
 | API 健康检查 | `http://127.0.0.1:9000/health` |
+| API 指标 | `http://127.0.0.1:9000/metrics` |
 | PostgreSQL | `127.0.0.1:5433` |
 | Redis | `127.0.0.1:6379` |
 | RabbitMQ AMQP | `127.0.0.1:5672` |
 | RabbitMQ 管理台 | `http://127.0.0.1:15672` |
+| Prometheus | `http://127.0.0.1:9090` |
+| Grafana 看板 | `http://127.0.0.1:3000/d/videofeed-overview/videofeed-overview` |
+
+Grafana 默认账号密码为 `admin` / `admin`，本地示例值，部署前必须替换。worker 指标服务位于容器内 `worker:9091/metrics`，不对外映射端口；如需本地直连，可在 Compose 中自行添加 `9091:9091` 映射。
 
 ### 本地开发
 
@@ -91,6 +97,17 @@ Compose 启动 `postgres`、`redis`、`rabbitmq`、`api`、`worker`、`web` 六�
 | --- | --- |
 | Web | `http://127.0.0.1:5173` |
 | API | `http://127.0.0.1:9000` |
+
+## 压力测试
+
+仓库提供 k6 脚本 `scripts/feed-load.js`，默认压测推荐流并带登录与阈值：
+
+```bash
+k6 run -e ACCOUNT=<测试账号> -e PASSWORD=<测试密码> scripts/feed-load.js
+k6 run -e SCENE=timeline -e VUS=50 -e DURATION=120s scripts/feed-load.js
+```
+
+可用环境变量：`BASE_URL`（默认 `http://127.0.0.1:9000`）、`SCENE`、`TOKEN`、`ACCOUNT`、`PASSWORD`、`LIMIT`、`THINK_TIME`、`VUS`、`DURATION`。压测结果可直接与 [监控模块](docs/modules/monitoring.md) 的 Prometheus 指标和 Grafana 看板对照。
 
 ## 文档地图
 

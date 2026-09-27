@@ -51,3 +51,9 @@
 Feed 条目新增当前用户点赞收藏状态，点赞、评论、关注通知携带触发者昵称和头像，评论计数在写入后同步缓存；分层映射、PostgreSQL 适配与验证限制见 [迁移审计](migration-2a21685.md)。
 
 - [2a21685：修复互动状态和通知用户展示](migration-2a21685.md)
+
+## 监控迁移
+
+新增 Prometheus 指标模块、API `/metrics` 与 worker `9091` 指标服务，并在 Feed、缓存、消息队列、上传和 worker 埋点；Compose 增加 Prometheus 与 Grafana 及概览看板。命名空间、端口与路径适配见 [迁移审计](migration-2b9eaa5.md) 和 [监控模块](modules/monitoring.md)。
+
+- [2b9eaa5：接入 Prometheus 和 Grafana 监控](migration-2b9eaa5.md)
