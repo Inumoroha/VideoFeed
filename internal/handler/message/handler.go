@@ -90,7 +90,7 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.CreateFromEvent(
+	result, err := h.service.CreateFromActorEvent(
 		c.Request.Context(),
 		req.UserID,
 		req.Type,
@@ -98,6 +98,9 @@ func (h *Handler) Create(c *gin.Context) {
 		req.Content,
 		req.EventID,
 		c.GetHeader("Idempotency-Key"),
+		req.ActorID,
+		req.ActorNickname,
+		req.ActorAvatarURL,
 	)
 	if err != nil {
 		writeMessageError(c, err)
@@ -147,18 +150,21 @@ func listResponseFromResult(result *applicationmessage.ListResult) messageListRe
 	}
 }
 
-// responseFromDomain 将领域消息转换为接口字段。
+// responseFromDomain 将领域消息转换为接口字段，包含可选的触发用户展示信息。
 func responseFromDomain(message *domainmessage.Message) messageResponse {
 	return messageResponse{
-		ID:        message.ID,
-		UserID:    message.UserID,
-		Type:      message.Type,
-		Title:     message.Title,
-		Content:   message.Content,
-		EventID:   message.EventID,
-		IsRead:    message.IsRead,
-		CreatedAt: message.CreatedAt,
-		ReadAt:    message.ReadAt,
+		ID:             message.ID,
+		UserID:         message.UserID,
+		Type:           message.Type,
+		Title:          message.Title,
+		Content:        message.Content,
+		EventID:        message.EventID,
+		ActorID:        message.ActorID,
+		ActorNickname:  message.ActorNickname,
+		ActorAvatarURL: message.ActorAvatarURL,
+		IsRead:         message.IsRead,
+		CreatedAt:      message.CreatedAt,
+		ReadAt:         message.ReadAt,
 	}
 }
 

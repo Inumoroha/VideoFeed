@@ -177,7 +177,7 @@ func (s *HotStrategy) List(ctx context.Context, req FeedRequest) (*FeedResult, e
 	if err != nil {
 		return nil, err
 	}
-	items, err := assembleFeedItems(ctx, s.repo, s.cache, page.Items)
+	items, err := assembleFeedItems(ctx, s.repo, s.cache, page.Items, req.ViewerID)
 	if err != nil {
 		return nil, ErrLoadFeedFailed
 	}
@@ -259,7 +259,7 @@ func (s *FollowingStrategy) List(ctx context.Context, req FeedRequest) (*FeedRes
 	if err != nil {
 		return nil, err
 	}
-	items, err := assembleFeedItems(ctx, s.repo, s.cache, page.Items)
+	items, err := assembleFeedItems(ctx, s.repo, s.cache, page.Items, req.ViewerID)
 	if err != nil {
 		return nil, ErrLoadFeedFailed
 	}
@@ -326,7 +326,7 @@ func (s *TimelineStrategy) List(ctx context.Context, req FeedRequest) (*FeedResu
 		return nil, err
 	}
 
-	items, err := assembleFeedItems(ctx, s.repo, s.cache, page.Items)
+	items, err := assembleFeedItems(ctx, s.repo, s.cache, page.Items, req.ViewerID)
 	if err != nil {
 		return nil, ErrLoadFeedFailed
 	}
@@ -442,8 +442,8 @@ func loadFeedPage(ctx context.Context, cache FeedCache, scene domainfeed.Scene, 
 	return page, nil
 }
 
-// assembleFeedItems 从 Feed 页项组装 Feed 项。
-func assembleFeedItems(ctx context.Context, repo domainfeed.Repository, cache FeedCache, pageItems []*domainfeed.FeedPageItem) ([]*domainfeed.FeedItem, error) {
+// assembleFeedItems 从 Feed 页项组装 Feed 项；查看者有效时叠加其点赞和收藏状态，状态读取失败直接返回错误。
+func assembleFeedItems(ctx context.Context, repo domainfeed.Repository, cache FeedCache, pageItems []*domainfeed.FeedPageItem, viewerID int64) ([]*domainfeed.FeedItem, error) {
 	videoIDs := feedPageVideoIDs(pageItems)
 	if len(videoIDs) == 0 {
 		return []*domainfeed.FeedItem{}, nil
@@ -484,6 +484,15 @@ func assembleFeedItems(ctx context.Context, repo domainfeed.Repository, cache Fe
 		}
 	}
 
+	viewerActions := map[int64]*domainfeed.ViewerActionState{}
+	if viewerID > 0 {
+		loadedViewerActions, err := repo.BatchGetViewerActionStates(ctx, viewerID, videoIDs)
+		if err != nil {
+			return nil, err
+		}
+		viewerActions = loadedViewerActions
+	}
+
 	items := make([]*domainfeed.FeedItem, 0, len(pageItems))
 	for _, pageItem := range pageItems {
 		if pageItem == nil {
@@ -511,6 +520,10 @@ func assembleFeedItems(ctx context.Context, repo domainfeed.Repository, cache Fe
 			stat.FavoriteCount,
 			pageItem.PublishedAt,
 		)
+		if action := viewerActions[item.VideoID]; action != nil {
+			item.Liked = action.Liked
+			item.Favorited = action.Favorited
+		}
 		item.HotScore = pageItem.HotScore
 		items = append(items, item)
 	}

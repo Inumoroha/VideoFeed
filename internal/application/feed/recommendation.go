@@ -70,7 +70,7 @@ func (s *RecommendStrategy) List(ctx context.Context, req FeedRequest) (*FeedRes
 			HotScore:    candidate.HotScore,
 		})
 	}
-	items, err := assembleFeedItems(ctx, s.repo, s.cache, pageItems)
+	items, err := assembleFeedItems(ctx, s.repo, s.cache, pageItems, req.ViewerID)
 	if err != nil {
 		return nil, ErrLoadFeedFailed
 	}

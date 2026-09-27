@@ -90,6 +90,7 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	interactionOptions := []func(*applicationinteraction.Service){applicationinteraction.WithMessageWriter(messageWriter)}
 	if feedCache != nil {
 		interactionOptions = append(interactionOptions, applicationinteraction.WithHotScoreCache(feedCache))
+		interactionOptions = append(interactionOptions, applicationinteraction.WithStatCache(feedCache))
 	}
 	if cfg.RabbitMQ.URL != "" {
 		broker, err := inframq.NewRabbitMQ(cfg.RabbitMQ)

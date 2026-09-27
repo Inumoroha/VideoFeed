@@ -157,6 +157,8 @@ func feedItemsResponseFromResult(result *applicationfeed.FeedResult) feedItemsRe
 			LikeCount:       item.LikeCount,
 			CommentCount:    item.CommentCount,
 			FavoriteCount:   item.FavoriteCount,
+			Liked:           item.Liked,
+			Favorited:       item.Favorited,
 			PublishedAt:     item.PublishedAt,
 		})
 	}

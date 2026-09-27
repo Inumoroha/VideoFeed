@@ -32,3 +32,8 @@ func NewMessageWriter(service *applicationmessage.Service) *MessageWriter {
 func (w *MessageWriter) CreateFromEvent(ctx context.Context, userID int64, messageType string, title string, content string, eventID string, idempotencyKey string) (any, error) {
 	return w.service.CreateFromEvent(ctx, userID, messageType, title, content, eventID, idempotencyKey)
 }
+
+// CreateFromActorEvent 转发带触发用户信息的消息创建请求并保留创建结果和错误。
+func (w *MessageWriter) CreateFromActorEvent(ctx context.Context, userID int64, messageType string, title string, content string, eventID string, idempotencyKey string, actorID int64, actorNickname string, actorAvatarURL string) (any, error) {
+	return w.service.CreateFromActorEvent(ctx, userID, messageType, title, content, eventID, idempotencyKey, actorID, actorNickname, actorAvatarURL)
+}
