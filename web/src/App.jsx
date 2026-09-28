@@ -2851,6 +2851,7 @@ function WorkViewer({ video, onClose }) {
     );
 }
 
+// UploadPage 在一次请求中提交视频、封面和作品资料，并保留失败重试的幂等键。
 function UploadPage({ session, onNavigate }) {
     const [form, setForm] = useState({
         title: "",
@@ -2861,6 +2862,9 @@ function UploadPage({ session, onNavigate }) {
     const [coverPreview, setCoverPreview] = useState("");
     const [status, setStatus] = useState("");
     const [submitting, setSubmitting] = useState(false);
+    const publishKeyRef = useRef("");
+
+    useEffect(() => { publishKeyRef.current = ""; }, [form.title, form.description, videoFile, coverFile]);
 
     useEffect(() => {
         if (!coverFile) {
@@ -2872,6 +2876,7 @@ function UploadPage({ session, onNavigate }) {
         return () => URL.revokeObjectURL(objectURL);
     }, [coverFile]);
 
+    // handleSubmit 通过组合接口发布作品，失败时保留同一幂等键供重试。
     async function handleSubmit(event) {
         event.preventDefault();
         setSubmitting(true);
@@ -2883,23 +2888,12 @@ function UploadPage({ session, onNavigate }) {
             if (!coverFile) {
                 throw new Error("请选择封面文件");
             }
-            const [videoUpload, coverUpload] = await Promise.all([
-                uploadFile(videoFile, "video", session.token),
-                uploadFile(coverFile, "cover", session.token),
-            ]);
-            await apiRequest("/api/videos", {
-                method: "POST",
-                token: session.token,
-                headers: {
-                    "Idempotency-Key": `web-upload-${Date.now()}`,
-                },
-                body: {
-                    title: form.title.trim(),
-                    description: form.description.trim(),
-                    media_url: videoUpload.url,
-                    cover_url: coverUpload.url,
-                },
-            });
+            if (!form.title.trim()) {
+                throw new Error("请输入视频标题");
+            }
+            publishKeyRef.current ||= `web-upload-${crypto.randomUUID()}`;
+            await publishVideoFiles(videoFile, coverFile, form, session.token, publishKeyRef.current);
+            publishKeyRef.current = "";
             setStatus("发布成功");
             onNavigate("/profile");
         } catch (error) {
@@ -3069,6 +3063,35 @@ function UploadPage({ session, onNavigate }) {
             </section>
         </main>
     );
+}
+
+// publishVideoFiles 一次提交视频、封面和作品字段，失败时抛出服务端错误。
+async function publishVideoFiles(videoFile, coverFile, form, token, idempotencyKey) {
+    const data = new FormData();
+    data.append("video", videoFile);
+    data.append("cover", coverFile);
+    data.append("title", form.title.trim());
+    data.append("description", form.description.trim());
+    const response = await fetch("/api/videos/upload", {
+        method: "POST",
+        headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${token}`,
+            "Idempotency-Key": idempotencyKey,
+        },
+        body: data,
+    });
+    if (!response.ok) {
+        let message = "发布失败";
+        try {
+            const payload = await response.json();
+            message = payload.error || payload.message || message;
+        } catch {
+            message = response.statusText || message;
+        }
+        throw new Error(message);
+    }
+    return response.json();
 }
 
 // normalizeRoute 归一化旧路径，保留已注册场景路径，并将未知路径映射到时间线。

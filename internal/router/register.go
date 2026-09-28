@@ -108,7 +108,12 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	exposureService := applicationexposure.NewService(exposurepersistence.New(gormDB), exposureOptions...)
 	exposureHandler := exposurehandler.NewHandler(exposureService)
 	videoService := applicationvideo.NewService(videoRepository, videoOptions...)
-	videoHandler := videohandler.NewHandler(videoService)
+	uploadRoot, err := filepath.Abs("./uploads")
+	if err != nil {
+		return fmt.Errorf("resolve upload directory: %w", err)
+	}
+	uploadHandler := uploadhandler.NewHandler(uploadRoot)
+	videoHandler := videohandler.NewHandler(videoService).WithUploader(uploadHandler)
 	interactionService := applicationinteraction.NewService(interactionRepository, interactionOptions...)
 	interactionHandler := interactionhandler.NewHandler(interactionService)
 	relationRepository := relationpersistence.New(gormDB)
@@ -118,11 +123,6 @@ func Register(g *gin.Engine, cfg *config.Config, gormDB *gorm.DB) error {
 	}
 	relationService := applicationrelation.NewService(relationRepository, relationOptions...)
 	relationHandler := relationhandler.NewHandler(relationService)
-	uploadRoot, err := filepath.Abs("./uploads")
-	if err != nil {
-		return fmt.Errorf("resolve upload directory: %w", err)
-	}
-	uploadHandler := uploadhandler.NewHandler(uploadRoot)
 	g.GET("/health", handler.Health)
 	// 暴露默认注册表的 Prometheus 指标，供 Prometheus 抓取。
 	g.GET("/metrics", gin.WrapH(inframetrics.Handler()))
@@ -190,6 +190,7 @@ func registerRoutes(g *gin.Engine, userHandler *userhandler.Handler, videoHandle
 
 	videos := api.Group("/videos")
 	videos.POST("", authMiddleware, videoHandler.Create)
+	videos.POST("/upload", authMiddleware, videoHandler.PublishMultipart)
 	videos.GET("/:videoId", videoHandler.Get)
 	videos.DELETE("/:videoId", authMiddleware, videoHandler.Delete)
 

@@ -2,12 +2,15 @@ package video
 
 import (
 	"errors"
+	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
 	applicationvideo "github.com/inumoroha/video-feed/internal/application/video"
 	domainvideo "github.com/inumoroha/video-feed/internal/domain/video"
+	uploadhandler "github.com/inumoroha/video-feed/internal/handler/upload"
 	"github.com/inumoroha/video-feed/internal/middleware"
 
 	"github.com/gin-gonic/gin"
@@ -15,13 +18,104 @@ import (
 
 const defaultListLimit = 20
 
+// Handler 提供视频查询、发布与删除接口，并在组合发布失败时清理本次上传的文件。
 type Handler struct {
-	service *applicationvideo.Service
+	service  *applicationvideo.Service
+	uploader *uploadhandler.Handler
 }
 
 // NewHandler 创建使用指定视频应用服务的 HTTP 处理器。
 func NewHandler(service *applicationvideo.Service) *Handler {
 	return &Handler{service: service}
+}
+
+// WithUploader 为组合发布接口设置复用现有校验规则的文件处理器。
+func (h *Handler) WithUploader(uploader *uploadhandler.Handler) *Handler {
+	h.uploader = uploader
+	return h
+}
+
+// PublishMultipart 在一次认证请求中保存视频和封面并发布作品，失败或幂等复用时删除本次文件。
+func (h *Handler) PublishMultipart(c *gin.Context) {
+	if h == nil || h.service == nil || h.uploader == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid access token"})
+		return
+	}
+	uploadhandler.LimitBody(c)
+	videoFile, err := c.FormFile("video")
+	if c.Request.MultipartForm != nil {
+		defer c.Request.MultipartForm.RemoveAll()
+	}
+	if err != nil {
+		writeMultipartFileError(c, err, "video")
+		return
+	}
+	coverFile, err := c.FormFile("cover")
+	if err != nil {
+		writeMultipartFileError(c, err, "cover")
+		return
+	}
+	video, err := h.uploader.SaveFile(c, videoFile, "video")
+	if err != nil {
+		uploadhandler.WriteError(c, err)
+		return
+	}
+	var cover *uploadhandler.SavedFile
+	retain := false
+	defer func() {
+		if !retain {
+			cleanupSavedFiles(video, cover)
+		}
+	}()
+	cover, err = h.uploader.SaveFile(c, coverFile, "cover")
+	if err != nil {
+		uploadhandler.WriteError(c, err)
+		return
+	}
+	result, err := h.service.CreatePublished(c.Request.Context(), userID,
+		c.PostForm("title"), c.PostForm("description"), video.URL, cover.URL,
+		c.GetHeader("Idempotency-Key"))
+	if err != nil {
+		writeVideoError(c, err)
+		return
+	}
+	if result == nil || result.Video == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+	if !result.Created {
+		c.JSON(http.StatusOK, videoResponseFromDomain(result.Video))
+		return
+	}
+	retain = true
+	c.JSON(http.StatusCreated, videoResponseFromDomain(result.Video))
+}
+
+// writeMultipartFileError 将缺失文件和超出请求体上限分别映射为 400 与 413。
+func writeMultipartFileError(c *gin.Context, err error, field string) {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "upload too large"})
+		return
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"error": field + " is required"})
+}
+
+// cleanupSavedFiles 逐个删除未发布的上传文件，删除失败写入日志供运维排查。
+func cleanupSavedFiles(files ...*uploadhandler.SavedFile) {
+	for _, file := range files {
+		if file == nil {
+			continue
+		}
+		if err := os.Remove(file.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Printf("cleanup unpublished upload %s: %v", file.Path, err)
+		}
+	}
 }
 
 // Create 接收视频发布请求，校验认证信息并返回创建或幂等复用结果。

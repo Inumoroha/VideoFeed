@@ -81,6 +81,9 @@ var errUnsupportedVideoCodec = errors.New("video codec is unsupported")
 var errInvalidVideoMetadata = errors.New("video metadata is invalid")
 var errVideoToolUnavailable = errors.New("video tool is unavailable")
 var errFaststartFailed = errors.New("video faststart failed")
+var errUploadRootUnavailable = errors.New("upload root is not configured")
+var errUploadDirectory = errors.New("failed to prepare upload directory")
+var errUploadSave = errors.New("failed to save upload")
 
 // UploadProcessor 负责视频元数据校验和 MP4 faststart 处理。
 type UploadProcessor interface {
@@ -94,6 +97,15 @@ type UploadProcessor interface {
 type Handler struct {
 	root      string
 	processor UploadProcessor
+}
+
+// SavedFile 保存本次上传的访问地址和磁盘路径，供发布失败时回收。
+type SavedFile struct {
+	URL      string
+	Kind     string
+	Filename string
+	Size     int64
+	Path     string
 }
 
 // NewHandler 创建使用指定根目录保存上传文件的 Handler。
@@ -117,14 +129,13 @@ func (h *Handler) Create(c *gin.Context) {
 	defer func() {
 		inframetrics.ObserveUpload(kind, time.Since(start), resultErr)
 	}()
-
 	if h == nil || strings.TrimSpace(h.root) == "" {
-		resultErr = errors.New("upload root is not configured")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "upload root is not configured"})
+		resultErr = errUploadRootUnavailable
+		WriteError(c, resultErr)
 		return
 	}
 
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadBytes)
+	LimitBody(c)
 
 	file, err := c.FormFile("file")
 	if c.Request.MultipartForm != nil {
@@ -149,52 +160,61 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 	kind = normalizedKind
 
-	validation, err := validateUploadFile(file, kind)
+	saved, err := h.SaveFile(c, file, kind)
 	if err != nil {
 		resultErr = err
-		writeUploadValidationError(c, err)
+		WriteError(c, err)
 		return
-	}
-	ext := validation.Ext
-
-	filename := fmt.Sprintf("%d-%s%s", time.Now().UnixNano(), randomSuffix(), ext)
-	targetDir := filepath.Join(h.root, kind)
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
-		resultErr = err
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to prepare upload directory"})
-		return
-	}
-
-	targetPath := filepath.Join(targetDir, filename)
-	if err := c.SaveUploadedFile(file, targetPath); err != nil {
-		resultErr = err
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save upload"})
-		return
-	}
-
-	if kind == "video" {
-		if err := h.processor.ValidateVideo(c.Request.Context(), targetPath); err != nil {
-			resultErr = err
-			_ = os.Remove(targetPath)
-			writeUploadProcessingError(c, err)
-			return
-		}
-		if shouldFaststart(validation.Ext) {
-			if err := h.processor.Faststart(c.Request.Context(), targetPath); err != nil {
-				resultErr = err
-				_ = os.Remove(targetPath)
-				writeUploadProcessingError(c, err)
-				return
-			}
-		}
 	}
 
 	c.JSON(http.StatusCreated, uploadResponse{
-		URL:      "/uploads/" + kind + "/" + filename,
-		Kind:     kind,
-		Filename: filename,
-		Size:     file.Size,
+		URL:      saved.URL,
+		Kind:     saved.Kind,
+		Filename: saved.Filename,
+		Size:     saved.Size,
 	})
+}
+
+// LimitBody 将上传请求体限制为一吉字节，供独立上传和组合发布共用。
+func LimitBody(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadBytes)
+}
+
+// SaveFile 校验并保存文件，视频处理失败时删除已写入的文件；返回路径供调用方在发布失败时清理。
+func (h *Handler) SaveFile(c *gin.Context, file *multipart.FileHeader, kind string) (*SavedFile, error) {
+	if h == nil || strings.TrimSpace(h.root) == "" {
+		return nil, errUploadRootUnavailable
+	}
+	validation, err := validateUploadFile(file, kind)
+	if err != nil {
+		return nil, err
+	}
+	filename := fmt.Sprintf("%d-%s%s", time.Now().UnixNano(), randomSuffix(), validation.Ext)
+	targetDir := filepath.Join(h.root, kind)
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return nil, fmt.Errorf("%w: %v", errUploadDirectory, err)
+	}
+	targetPath := filepath.Join(targetDir, filename)
+	if err := c.SaveUploadedFile(file, targetPath); err != nil {
+		_ = os.Remove(targetPath)
+		return nil, fmt.Errorf("%w: %v", errUploadSave, err)
+	}
+	if kind == "video" {
+		if err := h.processor.ValidateVideo(c.Request.Context(), targetPath); err != nil {
+			_ = os.Remove(targetPath)
+			return nil, err
+		}
+		if shouldFaststart(validation.Ext) {
+			if err := h.processor.Faststart(c.Request.Context(), targetPath); err != nil {
+				_ = os.Remove(targetPath)
+				return nil, err
+			}
+		}
+	}
+	return &SavedFile{
+		URL: "/uploads/" + kind + "/" + filename, Kind: kind,
+		Filename: filename, Size: file.Size, Path: targetPath,
+	}, nil
 }
 
 // normalizeKind 将客户端传入的上传类型限制为系统支持的目录名称。
@@ -514,13 +534,14 @@ func faststartVideo(ctx context.Context, path string) error {
 	return nil
 }
 
-// writeUploadValidationError 将上传文件校验失败映射为参数错误。
-func writeUploadValidationError(c *gin.Context, err error) {
-	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-}
-
-// writeUploadProcessingError 工具缺失或快启失败返回服务错误，其余视频校验失败返回参数错误。
-func writeUploadProcessingError(c *gin.Context, err error) {
+// WriteError 将上传校验、工具和存储错误映射为与独立上传接口一致的状态码。
+func WriteError(c *gin.Context, err error) {
+	for _, item := range []error{errUploadRootUnavailable, errUploadDirectory, errUploadSave} {
+		if errors.Is(err, item) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": item.Error()})
+			return
+		}
+	}
 	if errors.Is(err, errVideoToolUnavailable) || errors.Is(err, errFaststartFailed) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
