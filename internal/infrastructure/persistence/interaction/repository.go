@@ -146,18 +146,14 @@ func (r *Repository) setAction(ctx context.Context, userID int64, videoID int64,
 				return err
 			}
 		} else {
-			if action.Status == nextStatus {
-				action.Status = domaininteraction.ActionStatusCanceled
-				delta = -1
-			} else {
-				action.Status = domaininteraction.ActionStatusActive
-			}
+			// 按请求的 active 直接设置状态，变化量由当前状态与目标状态是否一致决定。
+			nextStatus, delta = resolveActionTransition(action.Status, active)
+			action.Status = nextStatus
 			action.IdempotencyKey = idempotencyKeyPtr(idempotencyKey)
 			if err := tx.Save(&action).Error; err != nil {
 				return err
 			}
 		}
-
 		if changed != nil {
 			*changed = delta
 		}
@@ -571,6 +567,19 @@ func actionStatusFromActive(active bool) int {
 		return domaininteraction.ActionStatusActive
 	}
 	return domaininteraction.ActionStatusCanceled
+}
+
+// resolveActionTransition 按请求的 active 直接给出目标状态和计数变化量：状态未变时变化量为零，仅在翻转时取正负一。
+// 非取消状态（含意外写入的零值）一律视为有效，避免把未知历史状态当成取消而反向减少计数。
+func resolveActionTransition(currentStatus int, active bool) (nextStatus int, delta int) {
+	nextStatus = actionStatusFromActive(active)
+	if active == (currentStatus != domaininteraction.ActionStatusCanceled) {
+		return nextStatus, 0
+	}
+	if active {
+		return nextStatus, 1
+	}
+	return nextStatus, -1
 }
 
 // restoreAction 将动作持久化记录转换为领域对象。

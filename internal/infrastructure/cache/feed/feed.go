@@ -42,6 +42,12 @@ func (c *FeedCache) SetActionState(ctx context.Context, userID, videoID int64, a
 	return result, nil
 }
 
+// shouldReuseStoredAction 判断是否复用已存互动状态：仅当请求与缓存中的幂等键都非空且相等时才复用，避免缺省键把不同操作误判为重放。
+func shouldReuseStoredAction(storedKey string, requestKey string) bool {
+	requestKey = strings.TrimSpace(requestKey)
+	return requestKey != "" && storedKey == requestKey
+}
+
 // setActionStateWithClient 在受监视事务中保存行为并原子累加分片，重复幂等键不增加计数。
 func (c *FeedCache) setActionStateWithClient(ctx context.Context, client redis.Cmdable, userID, videoID int64, actionType string, active bool, idempotencyKey string, initial *domaininteraction.VideoStat) (*applicationinteraction.ActionStateResult, error) {
 	actionType, err := domaininteraction.NormalizeActionType(actionType)
@@ -55,7 +61,7 @@ func (c *FeedCache) setActionStateWithClient(ctx context.Context, client redis.C
 	}
 	oldActive := old["active"] == "1"
 	delta := 0
-	if old["idempotency_key"] == strings.TrimSpace(idempotencyKey) && idempotencyKey != "" {
+	if shouldReuseStoredAction(old["idempotency_key"], idempotencyKey) {
 		active = oldActive
 	} else if old["active"] == "" {
 		if active {
@@ -275,12 +281,20 @@ func (c *FeedCache) SetStats(ctx context.Context, m map[int64]*domainfeed.FeedSt
 	return e
 }
 
-// SetVideoStat 写入单个视频的计数 JSON 缓存，用于评论写入后刷新 Feed 展示；无效统计直接跳过，并记录写入结果。
+// SetVideoStat 将评论数写入计数基数并清除短期快照，保留点赞和收藏分片；无效统计直接跳过。
 func (c *FeedCache) SetVideoStat(ctx context.Context, stat *domaininteraction.VideoStat) error {
 	if !videoStatCacheable(stat) {
 		return nil
 	}
-	err := setActionStatJSON(ctx, c.client, feedStatKey(stat.VideoID), videoStatToFeedStat(stat))
+	baseKey := interactionStatCounterBaseKey(stat.VideoID)
+	_, err := c.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.HSetNX(ctx, baseKey, "like_count", stat.LikeCount)
+		pipe.HSetNX(ctx, baseKey, "favorite_count", stat.FavoriteCount)
+		pipe.HSet(ctx, baseKey, "comment_count", stat.CommentCount)
+		pipe.Expire(ctx, baseKey, actionStatTTL)
+		pipe.Del(ctx, feedStatKey(stat.VideoID))
+		return nil
+	})
 	inframetrics.ObserveCacheWrite("stat", 1, err)
 	return err
 }
@@ -288,19 +302,6 @@ func (c *FeedCache) SetVideoStat(ctx context.Context, stat *domaininteraction.Vi
 // videoStatCacheable 判断统计是否具备可缓存的视频编号。
 func videoStatCacheable(stat *domaininteraction.VideoStat) bool {
 	return stat != nil && stat.VideoID > 0
-}
-
-// videoStatToFeedStat 将互动计数快照转换为 Feed 展示计数，空快照返回空值。
-func videoStatToFeedStat(stat *domaininteraction.VideoStat) *domainfeed.FeedStat {
-	if stat == nil {
-		return nil
-	}
-	return &domainfeed.FeedStat{
-		VideoID:       stat.VideoID,
-		LikeCount:     stat.LikeCount,
-		CommentCount:  stat.CommentCount,
-		FavoriteCount: stat.FavoriteCount,
-	}
 }
 
 // AddHotScore 将互动热度写入分钟粒度的 Redis ZSET。
