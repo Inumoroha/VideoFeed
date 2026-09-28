@@ -10,7 +10,8 @@
 
 | 方法   | 接口路径                     | 作用                   | 鉴权       | 幂等键 |
 | ------ | ---------------------------- | ---------------------- | ---------- | ------ |
-| POST   | `/api/videos`                | 创建并发布视频         | Bearer JWT | 支持   |
+| POST   | `/api/videos`                | 使用已有媒体地址发布视频 | Bearer JWT | 支持   |
+| POST   | `/api/videos/upload`         | 上传视频与封面并发布作品 | Bearer JWT | 支持   |
 | GET    | `/api/videos/{videoId}`      | 查询视频详情           | 可匿名     | -      |
 | DELETE | `/api/videos/{videoId}`      | 删除视频（软删除）     | Bearer JWT | -      |
 | GET    | `/api/users/{userId}/videos` | 根据用户ID查询作品列表 | 可匿名     | -      |
@@ -30,6 +31,8 @@
 视频详情、作者作品列表和当前用户作品列表响应均包含 `description` 字段。描述为空时返回空字符串。
 
 `POST /api/uploads` 使用 Bearer JWT、multipart 文件上传，不支持 `Idempotency-Key`。视频删除本身可重复执行，但不读取幂等键。
+
+网页发布页使用 `POST /api/videos/upload`，在一个 multipart 请求中发送 `video`、`cover`、`title` 和可选 `description`。该接口沿用独立上传的格式、大小及视频元数据校验；视频经校验和 faststart 后保存，封面或作品发布失败会清理本次已保存的文件。数据库发布成功返回 201；相同用户以同一幂等键重放时返回 200 和已有作品，并清理重试上传的文件。原 `POST /api/videos` 与 `POST /api/uploads` 仍可供使用已有媒体地址的客户端调用，独立上传的生命周期由调用方负责。
 
 ## 3. 数据表设计
 
@@ -86,11 +89,11 @@
 
 测试位于 `internal/application/video/service_test.go`、`internal/domain/video/video_test.go`、`internal/infrastructure/persistence/video/repository_test.go`、`internal/router/router_test.go`、`internal/handler/upload/handler_test.go`。覆盖发布及统计创建、未登录 401、可见视频详情、缺失 404、作者删除、非作者权限错误、公开作品过滤、发布幂等、上传错误；消息失败和重复投递见同包 fanout 测试。
 
-上传媒体测试位于 `internal/router/upload_api_test.go` 和 `internal/handler/upload/{metadata,validation,processor_live}_test.go`：非法媒体返回 400，已经落盘的失败文件被清理；合法 MP4/MOV 校验元数据后执行 faststart。真实媒体测试需要 ffmpeg/ffprobe，缺少工具时明确跳过。
+上传媒体测试位于 `internal/router/upload_api_test.go`、`internal/handler/upload/{metadata,validation,processor_live}_test.go` 和 `internal/handler/video/upload_publish_test.go`：非法媒体返回 400，已经落盘的失败文件被清理；组合发布覆盖封面失败、字段错误、仓储失败和幂等重放；合法 MP4/MOV 校验元数据后执行 faststart。真实媒体测试需要 ffmpeg/ffprobe，缺少工具时明确跳过。
 
 ## 6. 前端接入点
 
-发布页上传文件并填写标题和简介；Feed 与视频详情展示视频、作者和计数；我的作品及公开主页查询对应作者列表。实现入口为 `web/src/App.jsx`。
+发布页一次提交视频、封面、标题和简介；失败重试复用同一幂等键。Feed 与视频详情展示视频、作者和计数；我的作品及公开主页查询对应作者列表。实现入口为 `web/src/App.jsx`。
 
 ## 上传校验与快启
 
