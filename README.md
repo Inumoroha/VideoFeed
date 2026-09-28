@@ -14,7 +14,7 @@ VideoFeed 是一个面向短视频场景的 Feed 系统工程。项目用 Go API
 - Redis Feed 缓存、热榜和互动计数。
 - RabbitMQ 异步互动落库、视频发布事件和向量任务。
 - 播放配置回退、资源预加载、播放器质量采集和幂等上报，详见 [播放模块](docs/modules/playback.md)。
-- 上传视频/图片校验与 MP4/MOV faststart；本地 API 需提供 FFmpeg/ffprobe，容器镜像已包含，详见 [视频模块](docs/modules/video.md)。
+- 网页端通过 `POST /api/videos/upload` 一次提交视频、封面和作品资料；封面校验或发布失败会清理本次文件，幂等重放复用已有作品。视频/图片上传校验与 MP4/MOV faststart 依赖 FFmpeg/ffprobe，详见 [视频模块](docs/modules/video.md)。
 - React + Vite Web 客户端。
 - Prometheus 指标与 Grafana 看板：API 暴露 `/metrics`，worker 独立 `9091` 指标服务，Compose 提供 Prometheus 与 Grafana，详见 [监控模块](docs/modules/monitoring.md)。
 - API 流程测试和 Web 生产构建。
@@ -104,6 +104,10 @@ Grafana 默认账号密码为 `admin` / `admin`，本地示例值，部署前必
 
 重点查看 `http_reqs` 后面的 `/s`、`http_req_duration p(95)`、`http_req_failed` 和 `feed_success_rate`。
 
+性能指南中的数值只用于说明指标格式。简历或演示材料中的 QPS、P95 和错误率须来自本项目的实际压测，并同时记录环境、并发数、时长和数据规模。
+
+本机 Compose 的一次可复核基线见 [性能原始结果](docs/performance-results/timeline-compose-2026-09-28.json) 和 [演示说明](docs/demo.md)；该结果不代表生产环境容量。
+
 ## 文档地图
 
 | 文档 | 用途 |
@@ -114,6 +118,8 @@ Grafana 默认账号密码为 `admin` / `admin`，本地示例值，部署前必
 | [docs/engineering.md](docs/engineering.md) | 工程规范、目录规则、API 风格、测试约定 |
 | [docs/optimization.md](docs/optimization.md) | Feed 性能和稳定性专题 |
 | [docs/performance-testing.md](docs/performance-testing.md) | k6 压测、QPS/P95 解读、Grafana 指标观察 |
+| [docs/demo.md](docs/demo.md) | 本地 Compose 演示流程与实测证据 |
+| [docs/integration-verification.md](docs/integration-verification.md) | 真实服务与完整 Compose 联调记录 |
 | [docs/interview-questions.md](docs/interview-questions.md) | 围绕本项目的面试问答清单与实现边界说明 |
 | [docs/uiux.md](docs/uiux.md) | Web 客户端 UI/UX 规格 |
 | [docs/modules/](docs/modules/README.md) | 各业务模块设计 |

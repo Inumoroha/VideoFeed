@@ -194,3 +194,13 @@ if action.Status == nextStatus {
 提交前重新执行 `scripts/integration-smoke.ps1` 时，旧 worker 未消费 RabbitMQ 队列，首次得到 31/32。用当前源码重启 worker 后，互动队列从 4 条待处理消息恢复为 0 条、消费者数为 1；脚本等待异步查看者状态后重跑，32/32 项通过。脚本现会在断言失败时返回非零退出码。
 
 组合发布在正常的封面、字段和数据库失败路径上回收文件；进程在文件保存后突然退出或文件删除本身失败仍需要运维清理孤儿文件。旧的独立 `POST /api/uploads` 与 `POST /api/videos` 继续开放，使用这两个接口的客户端仍须自行管理已上传文件的生命周期。
+
+## 8. 完整 Docker Compose 构建与监控复验
+
+本节在同一天使用当前源码继续验证，覆盖此前第 1 至 5 节没有实测的容器构建、Web 生产镜像和监控服务。`docker compose up --build -d` 成功构建并启动 API、worker、Web、PostgreSQL、Redis、RabbitMQ、Prometheus、Grafana 八项服务；`api` 与三项基础设施显示 healthy，其余服务保持 running。API 镜像中的 `ffmpeg` 和 `ffprobe` 均为 6.1.2。沿用现有数据卷，没有执行 `down -v`。
+
+通过 Web/Nginx 的 `http://127.0.0.1:5173` 路径注册、登录，并以真实 2 秒 H.264 MP4 和 PNG 封面向 `POST /api/videos/upload` 发布，返回 201，生成作品 ID 14。详情与时间线可读取作品，媒体 Range 请求返回 206；容器内 ffprobe 识别已上传的视频。封面内容无效和空标题分别返回 400，失败前后上传卷的视频/封面文件数均为 `1/1`。这验证了正常失败路径的文件回收，但不覆盖进程突然退出或删除文件失败。
+
+Prometheus `/api/v1/targets` 中 API 和 worker 两个 target 均为 `up`。Grafana `/api/health` 正常，Prometheus 数据源和 `VideoFeed Overview` 看板已加载，八条面板 PromQL 均可执行。RabbitMQ 的互动、发布、向量队列各有一个消费者；曝光队列无消费者，仍是已记录的实现边界。组合发布此前没有上传耗时计数，本次补记 `kind="publish"` 成功/失败指标：重建 API 镜像后，真实成功和失败请求各产生样本，Prometheus 也抓取到该序列。
+
+在同一 Compose 网络运行 `grafana/k6:0.54.0`，使用 `scripts/feed-load.js` 对公开时间线首页（`limit=10`）施加 20 VU、60 秒负载，每轮间隔 0.2 秒。测试时数据库为 12 位用户、15 个视频。k6 正常退出，完成 5,880 次请求，平均 97.96 RPS，HTTP 请求 P95 为 5.62 ms，失败率 0%，两项响应检查均通过，所有阈值通过。原始摘要保存在 [timeline Compose 压测结果](performance-results/timeline-compose-2026-09-28.json)。这只是小数据量、单机、缓存命中场景的基线，不代表生产环境容量或极限 QPS。
