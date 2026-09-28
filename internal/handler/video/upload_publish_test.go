@@ -10,12 +10,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	applicationvideo "github.com/inumoroha/video-feed/internal/application/video"
 	domainvideo "github.com/inumoroha/video-feed/internal/domain/video"
 	uploadhandler "github.com/inumoroha/video-feed/internal/handler/upload"
+	inframetrics "github.com/inumoroha/video-feed/internal/infrastructure/metrics"
 	"github.com/inumoroha/video-feed/internal/middleware"
 )
 
@@ -93,6 +96,7 @@ func assertUploadFiles(t *testing.T, root, kind string, want int) {
 func TestPublishMultipartRetainsFilesOnSuccess(t *testing.T) {
 	root := t.TempDir()
 	repo := &handlerTestRepository{}
+	before := publishMetricCount(t, "success")
 	recorder, _ := invokeMultipartPublish(t, root, repo, pngUploadBytes(), "live title")
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
@@ -106,17 +110,43 @@ func TestPublishMultipartRetainsFilesOnSuccess(t *testing.T) {
 	}
 	assertUploadFiles(t, root, "video", 1)
 	assertUploadFiles(t, root, "cover", 1)
+	if got := publishMetricCount(t, "success"); got != before+1 {
+		t.Fatalf("publish success metric = %v, want %v", got, before+1)
+	}
 }
 
 // TestPublishMultipartCleansVideoWhenCoverFails 验证封面格式错误时回收已保存的视频。
 func TestPublishMultipartCleansVideoWhenCoverFails(t *testing.T) {
 	root := t.TempDir()
+	before := publishMetricCount(t, "error")
 	recorder, _ := invokeMultipartPublish(t, root, &handlerTestRepository{}, []byte("not an image"), "live title")
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	assertUploadFiles(t, root, "video", 0)
 	assertUploadFiles(t, root, "cover", 0)
+	if got := publishMetricCount(t, "error"); got != before+1 {
+		t.Fatalf("publish error metric = %v, want %v", got, before+1)
+	}
+}
+
+// publishMetricCount 从现有指标端点读取组合发布的成功或失败计数。
+func publishMetricCount(t *testing.T, result string) float64 {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	inframetrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	prefix := `videofeed_video_upload_total{kind="publish",result="` + result + `"} `
+	for _, line := range strings.Split(recorder.Body.String(), "\n") {
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		count, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimPrefix(line, prefix)), 64)
+		if err != nil {
+			t.Fatalf("parse publish metric: %v", err)
+		}
+		return count
+	}
+	return 0
 }
 
 // TestPublishMultipartCleansFilesWhenSaveFails 验证数据库保存失败时回收两份文件。

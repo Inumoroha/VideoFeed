@@ -7,10 +7,12 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	applicationvideo "github.com/inumoroha/video-feed/internal/application/video"
 	domainvideo "github.com/inumoroha/video-feed/internal/domain/video"
 	uploadhandler "github.com/inumoroha/video-feed/internal/handler/upload"
+	inframetrics "github.com/inumoroha/video-feed/internal/infrastructure/metrics"
 	"github.com/inumoroha/video-feed/internal/middleware"
 
 	"github.com/gin-gonic/gin"
@@ -35,8 +37,16 @@ func (h *Handler) WithUploader(uploader *uploadhandler.Handler) *Handler {
 	return h
 }
 
-// PublishMultipart 在一次认证请求中保存视频和封面并发布作品，失败或幂等复用时删除本次文件。
+// PublishMultipart 在一次认证请求中保存视频和封面并发布作品，失败或幂等复用时删除本次文件，同时记录上传结果与耗时。
 func (h *Handler) PublishMultipart(c *gin.Context) {
+	start := time.Now()
+	defer func() {
+		var resultErr error
+		if c.Writer.Status() >= http.StatusBadRequest {
+			resultErr = errors.New("publish upload failed")
+		}
+		inframetrics.ObserveUpload("publish", time.Since(start), resultErr)
+	}()
 	if h == nil || h.service == nil || h.uploader == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 		return

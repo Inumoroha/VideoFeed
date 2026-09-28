@@ -20,7 +20,7 @@ Prometheus 指标与 Grafana 看板已接入，实现位于 `internal/infrastruc
 | `videofeed_feed_items_total` | counter | `scene` | 同上，仅成功且有条目时累计 |
 | `videofeed_feed_cache_requests_total` | counter | `area`、`result` | Feed 缓存页、卡片、计数读取；`area` 为 `page`、`card`、`stat` |
 | `videofeed_feed_cache_writes_total` | counter | `area`、`result` | 同上，写入数量非正按一次计算 |
-| `videofeed_video_upload_total` | counter | `kind`、`result` | 上传接口，`kind` 未知时使用 `unknown` |
+| `videofeed_video_upload_total` | counter | `kind`、`result` | 独立上传按文件类型记录，组合发布使用 `publish`；未知类型使用 `unknown` |
 | `videofeed_video_upload_duration_seconds` | histogram | `kind`、`result` | 同上 |
 | `videofeed_video_processing_duration_seconds` | histogram | `step`、`result` | `probe` 与 `faststart` 两个处理步骤 |
 | `videofeed_worker_jobs_total` | counter | `job`、`result` | 互动、分发、向量 worker 与 RabbitMQ 解码/消费 |
