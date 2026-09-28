@@ -21,14 +21,15 @@ auth:
         secret: "${JWT_SECRET}"
         access_ttl: "15m"
         refresh_ttl: "168h"
+
 redis:
     addr: "localhost:6379"
     password: ""
     db: 0
 rabbitmq:
-    url: "amqp://guest:guest@localhost:5672/"
-    interaction_exchange: "gcfeed.interaction"
-    action_changed_queue: "gcfeed.interaction.action_changed"
+    url: "amqp://rabbitmq:rabbitmq_password@localhost:5672/"
+    interaction_exchange: "videofeed.interaction"
+    action_changed_queue: "videofeed.interaction.action_changed"
     action_changed_routing: "interaction.action_changed"
     video_exchange: "videofeed.video"
     video_published_queue: "videofeed.video.published"
