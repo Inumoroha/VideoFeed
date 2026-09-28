@@ -164,7 +164,7 @@ VideoFeed 是一个面向短视频场景的高性能 Feed 流后端系统，围�
    启动时在事务和咨询锁内自动迁移数据模型，并创建 Feed 时间线索引，优化回源查询。
 
 4. **Docker Compose 本地编排**
-   支持 PostgreSQL、Redis、RabbitMQ、API、Worker、Web 六个服务一键本地启动，包含健康检查和启动依赖顺序。
+   支持 PostgreSQL、Redis、RabbitMQ、API、Worker、Web、Prometheus、Grafana 八个服务一键本地启动，包含健康检查和启动依赖顺序。
 
 5. **Kubernetes 部署**
    `deploy.yaml` 提供 API、Worker、Web、PostgreSQL、Redis、RabbitMQ 的部署清单、Service、PVC、依赖等待和健康检查。
@@ -173,6 +173,8 @@ VideoFeed 是一个面向短视频场景的高性能 Feed 流后端系统，围�
    覆盖 Feed、推荐、曝光、互动、播放、上传、消息、关系、视频发布 Fanout 等核心链路。
 
 ## 简历压缩版
+
+一次可复核的本机 Compose 基线：2026-09-28 在 Windows Docker Desktop 上，以 20 VU 持续 60 秒、每轮间隔 0.2 秒请求公开时间线首页（`limit=10`）；当时数据库有 12 位用户和 15 个视频。k6 完成 5,880 次请求，平均 97.96 次请求/秒，P95 5.62 毫秒，HTTP 失败率 0%。这是小数据量、单机、缓存命中场景的结果，不是系统极限 QPS 或生产容量。原始摘要见 [timeline Compose 压测结果](performance-results/timeline-compose-2026-09-28.json)，复现步骤见 [演示说明](demo.md)。
 
 ### 版本一
 
