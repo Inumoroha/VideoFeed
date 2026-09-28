@@ -3,10 +3,11 @@ package feed
 import (
 	"context"
 	"encoding/json"
-	domaininteraction "github.com/inumoroha/video-feed/internal/domain/interaction"
 	"testing"
 	"time"
 
+	domainfeed "github.com/inumoroha/video-feed/internal/domain/feed"
+	domaininteraction "github.com/inumoroha/video-feed/internal/domain/interaction"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -151,20 +152,20 @@ func TestGetStatsReadsShardedCountersOnJSONMiss(t *testing.T) {
 	}
 }
 
-// TestSetVideoStatWritesJSONCache 验证单视频计数写入后可从 JSON 缓存按原值读回。
-func TestSetVideoStatWritesJSONCache(t *testing.T) {
+// TestSetActionStatJSON 验证聚合计数写入后可从 JSON 缓存按原值读回。
+func TestSetActionStatJSON(t *testing.T) {
 	ctx := context.Background()
 	videoID := int64(1005)
 	redisClient := newActionStatFakeRedis()
 
-	err := setActionStatJSON(ctx, redisClient, feedStatKey(videoID), videoStatToFeedStat(&domaininteraction.VideoStat{
+	err := setActionStatJSON(ctx, redisClient, feedStatKey(videoID), &domainfeed.FeedStat{
 		VideoID:       videoID,
 		LikeCount:     2,
 		CommentCount:  3,
 		FavoriteCount: 1,
-	}))
+	})
 	if err != nil {
-		t.Fatalf("SetVideoStat: %v", err)
+		t.Fatalf("setActionStatJSON: %v", err)
 	}
 
 	stats, err := getStats(ctx, redisClient, []int64{videoID})

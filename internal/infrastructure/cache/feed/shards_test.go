@@ -175,6 +175,65 @@ func TestFavoriteReplayKeepsOriginalState(t *testing.T) {
 	}
 }
 
+// TestShardedActionWithoutIdempotencyKeyAppliesStateChange 验证缺省幂等键时点赞与取消点赞都真实生效，不会把取消请求当成重放。
+func TestShardedActionWithoutIdempotencyKeyAppliesStateChange(t *testing.T) {
+	cache, _ := newShardTestCache(t)
+	ctx := context.Background()
+
+	like, err := cache.SetActionState(ctx, 7, 201, "like", true, "", nil)
+	if err != nil || !like.Active || like.Delta != 1 || like.LikeCount != 1 {
+		t.Fatalf("like=%+v error=%v", like, err)
+	}
+	unlike, err := cache.SetActionState(ctx, 7, 201, "like", false, "", nil)
+	if err != nil || unlike.Active || unlike.Delta != -1 || unlike.LikeCount != 0 {
+		t.Fatalf("unlike=%+v error=%v", unlike, err)
+	}
+
+	// 再次取消：无幂等键时按当前状态幂等处理，不再产生计数变化。
+	again, err := cache.SetActionState(ctx, 7, 201, "like", false, "", nil)
+	if err != nil || again.Active || again.Delta != 0 || again.LikeCount != 0 {
+		t.Fatalf("second unlike=%+v error=%v", again, err)
+	}
+}
+
+// TestShardedActionDifferentKeysApplyStateChange 验证不同幂等键的请求按状态语义生效，而不是被当成重放。
+func TestShardedActionDifferentKeysApplyStateChange(t *testing.T) {
+	cache, _ := newShardTestCache(t)
+	ctx := context.Background()
+
+	if _, err := cache.SetActionState(ctx, 8, 202, "like", true, "like-1", nil); err != nil {
+		t.Fatal(err)
+	}
+	unlike, err := cache.SetActionState(ctx, 8, 202, "like", false, "unlike-1", nil)
+	if err != nil || unlike.Active || unlike.Delta != -1 || unlike.LikeCount != 0 {
+		t.Fatalf("unlike with new key=%+v error=%v", unlike, err)
+	}
+}
+
+// TestShouldReuseStoredActionRequiresNonEmptyKey 验证只有请求与缓存的幂等键都非空且相等时才复用已存状态。
+func TestShouldReuseStoredActionRequiresNonEmptyKey(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		storedKey  string
+		requestKey string
+		want       bool
+	}{
+		{"两侧都为空不复用", "", "", false},
+		{"请求为空但缓存非空不复用", "old", "", false},
+		{"缓存为空但请求非空不复用", "", "new", false},
+		{"两侧相同非空复用", "key-1", "key-1", true},
+		{"去除首尾空白后相同复用", "key-1", " key-1 ", true},
+		{"两侧不同不复用", "key-1", "key-2", false},
+		{"仅空白视为空", "key-1", "   ", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldReuseStoredAction(tc.storedKey, tc.requestKey); got != tc.want {
+				t.Fatalf("shouldReuseStoredAction(%q, %q) = %t, want %t", tc.storedKey, tc.requestKey, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestStatsIgnoreObsoleteCounter 验证旧哈希不再参与回退，JSON 和初始统计仍可作为来源。
 func TestStatsIgnoreObsoleteCounter(t *testing.T) {
 	cache, client := newShardTestCache(t)

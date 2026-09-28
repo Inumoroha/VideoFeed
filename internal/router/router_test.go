@@ -67,6 +67,7 @@ func TestRegisterRoutesRegistersExpectedPaths(t *testing.T) {
 		http.MethodGet + " /api/users/me/videos",
 		http.MethodGet + " /api/users/:userId/videos",
 		http.MethodPost + " /api/videos",
+		http.MethodPost + " /api/videos/upload",
 		http.MethodGet + " /api/videos/:videoId",
 		http.MethodDelete + " /api/videos/:videoId",
 		http.MethodPut + " /api/videos/:videoId/like",
@@ -122,7 +123,7 @@ func TestRegisterRoutesProtectsUserEndpoints(t *testing.T) {
 	}
 }
 
-// TestRegisterRoutesProtectsUploadEndpoint 验证文件上传接口缺少认证信息时返回 401。
+// TestRegisterRoutesProtectsUploadEndpoint 验证独立上传和组合发布接口缺少认证信息时返回 401。
 func TestRegisterRoutesProtectsUploadEndpoint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
@@ -136,11 +137,12 @@ func TestRegisterRoutesProtectsUploadEndpoint(t *testing.T) {
 	}
 	registerRoutes(engine, userhandler.NewHandler(nil), videohandler.NewHandler(nil), feedhandler.NewHandler(nil), uploadhandler.NewHandler(t.TempDir()), manager)
 
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/uploads", nil)
-	engine.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("POST /api/uploads status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	for _, path := range []string{"/api/uploads", "/api/videos/upload"} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, path, nil)
+		engine.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusUnauthorized {
+			t.Errorf("POST %s status = %d, want %d", path, recorder.Code, http.StatusUnauthorized)
+		}
 	}
 }

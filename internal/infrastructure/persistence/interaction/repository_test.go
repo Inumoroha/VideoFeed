@@ -100,6 +100,59 @@ func TestSetActionReturnsStoredIdempotencySnapshot(t *testing.T) {
 	}
 }
 
+// TestResolveActionTransitionFollowsRequestedState 验证状态与变化量按请求的 active 直接决定，而不是按当前状态取反。
+func TestResolveActionTransitionFollowsRequestedState(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		currentStatus int
+		active        bool
+		wantStatus    int
+		wantDelta     int
+	}{
+		{"取消点赞且当前有效", domaininteraction.ActionStatusActive, false, domaininteraction.ActionStatusCanceled, -1},
+		{"取消点赞且当前已取消", domaininteraction.ActionStatusCanceled, false, domaininteraction.ActionStatusCanceled, 0},
+		{"点赞且当前已取消", domaininteraction.ActionStatusCanceled, true, domaininteraction.ActionStatusActive, 1},
+		{"点赞且当前有效", domaininteraction.ActionStatusActive, true, domaininteraction.ActionStatusActive, 0},
+		{"取消收藏且当前有效", domaininteraction.ActionStatusActive, false, domaininteraction.ActionStatusCanceled, -1},
+		{"零值状态视为有效且取消请求按切换处理", 0, false, domaininteraction.ActionStatusCanceled, -1},
+		{"零值状态视为有效且点赞请求不重复计数", 0, true, domaininteraction.ActionStatusActive, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotStatus, gotDelta := resolveActionTransition(tc.currentStatus, tc.active)
+			if gotStatus != tc.wantStatus || gotDelta != tc.wantDelta {
+				t.Fatalf("resolveActionTransition(%d, %t) = (%d, %d), want (%d, %d)",
+					tc.currentStatus, tc.active, gotStatus, gotDelta, tc.wantStatus, tc.wantDelta)
+			}
+		})
+	}
+}
+
+// TestResolveActionTransitionIsIdempotentPerState 验证同一目标状态连续请求只会产生一次计数变化。
+func TestResolveActionTransitionIsIdempotentPerState(t *testing.T) {
+	status := domaininteraction.ActionStatusCanceled
+	totalDelta := 0
+
+	status, delta := resolveActionTransition(status, true)
+	totalDelta += delta
+	if status != domaininteraction.ActionStatusActive || delta != 1 {
+		t.Fatalf("first like = (%d, %d), want (%d, 1)", status, delta, domaininteraction.ActionStatusActive)
+	}
+	if _, delta = resolveActionTransition(status, true); delta != 0 {
+		t.Fatalf("repeated like delta = %d, want 0", delta)
+	}
+	status, delta = resolveActionTransition(status, false)
+	totalDelta += delta
+	if status != domaininteraction.ActionStatusCanceled || delta != -1 {
+		t.Fatalf("unlike = (%d, %d), want (%d, -1)", status, delta, domaininteraction.ActionStatusCanceled)
+	}
+	if _, delta = resolveActionTransition(status, false); delta != 0 {
+		t.Fatalf("repeated unlike delta = %d, want 0", delta)
+	}
+	if totalDelta != 0 {
+		t.Fatalf("like then unlike net delta = %d, want 0", totalDelta)
+	}
+}
+
 // newInteractionMockRepository 创建使用 PostgreSQL SQL mock 的互动仓储。
 func newInteractionMockRepository(t *testing.T) (*Repository, sqlmock.Sqlmock) {
 	t.Helper()

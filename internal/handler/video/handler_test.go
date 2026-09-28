@@ -13,18 +13,24 @@ import (
 	"github.com/inumoroha/video-feed/internal/middleware"
 )
 
+// handlerTestRepository 保存视频接口测试的仓储调用和预设结果。
 type handlerTestRepository struct {
-	savedVideo  *domainvideo.Video
-	findVideo   *domainvideo.Video
-	findErr     error
-	listVideos  []*domainvideo.Video
-	listLimit   int
-	listOffset  int
-	updateVideo *domainvideo.Video
+	savedVideo    *domainvideo.Video
+	existingVideo *domainvideo.Video
+	saveErr       error
+	findVideo     *domainvideo.Video
+	findErr       error
+	listVideos    []*domainvideo.Video
+	listLimit     int
+	listOffset    int
+	updateVideo   *domainvideo.Video
 }
 
 // Save 记录测试视频并模拟保存成功。
 func (r *handlerTestRepository) Save(_ context.Context, video *domainvideo.Video) error {
+	if r.saveErr != nil {
+		return r.saveErr
+	}
 	r.savedVideo = video
 	video.ID = 1
 	return nil
@@ -46,8 +52,11 @@ func (r *handlerTestRepository) FindByIDAnyStatus(_ context.Context, _ int64) (*
 	return r.findVideo, nil
 }
 
-// FindByAuthorAndIdempotencyKey 返回测试幂等记录或未找到错误。
+// FindByAuthorAndIdempotencyKey 返回预设幂等记录，未设置时返回未找到错误。
 func (r *handlerTestRepository) FindByAuthorAndIdempotencyKey(_ context.Context, _ int64, _ string) (*domainvideo.Video, error) {
+	if r.existingVideo != nil {
+		return r.existingVideo, nil
+	}
 	return nil, domainvideo.ErrVideoNotFound
 }
 
